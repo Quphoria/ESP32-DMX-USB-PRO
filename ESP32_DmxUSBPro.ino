@@ -35,6 +35,7 @@
 #define DMX_PORT = DMX_NUM_2
 #define FIRMWARE_VERSION 144
 #define SERIAL_NUMBER 0x0ffffffff // Not sure why the leading 0, should be 4 bytes, maybe documentation meant 0x
+#define DMX_BAUD_RATE 250000 // typical baud rate - 250000
 
 #include "esp_dmx.h"
 
@@ -69,7 +70,8 @@ unsigned char[513] dmx_buffer_b = {0};
 void setupDMX();
 void processMessage();
 void sendResponse(unsigned char label, unsigned int length, unsigned char *data);
-
+uint8_t calculateBreakNum();
+uint16_t calculateIdleNum();
 
 void setup() {
   Serial.begin(57600);
@@ -157,6 +159,8 @@ void processMessage() {
     MABTime = data_buffer[3]
     RefreshRate = data_buffer[4]
     memcpy(user_config, &data_buffer[5], user_config_size);
+    dmx_set_break_num(DMX_PORT, calculateBreakNum());
+    dmx_set_idle_num(DMX_PORT, calculateIdleNum());
     break;
   case DMX_PRO_SEND_PACKET:
     dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
@@ -199,8 +203,21 @@ void sendResponse(unsigned char label, unsigned int length, unsigned char *data)
 
 }
 
+// DMX Functions
+uint8_t calculateBreakNum() {
+  return (uint8_t)((((double)BreakTime) * 10.67e-6) * (double)DMX_BAUD_RATE);
+}
+uint16_t calculateIdleNum() {
+  return (uint8_t)((((double)MABTime) * 10.67e-6) * (double)DMX_BAUD_RATE);
+}
+
 void setupDMX() {
   // first configure the UART...
+  const dmx_config_t config = {
+    .baud_rate = DMX_BAUD_RATE, 
+    .break_num = calculateBreakNum(), 
+    .idle_num = calculateIdleNum()
+};
   const dmx_config_t config = DMX_DEFAULT_CONFIG;
   dmx_param_config(DMX_PORT, &config);
 
