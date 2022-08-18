@@ -279,7 +279,7 @@ void setupDMX() {
     .baud_rate = DMX_BAUD_RATE, 
     .break_num = calculateBreakNum(), 
     .idle_num = calculateIdleNum()
-};
+  };
   const dmx_config_t config = DMX_DEFAULT_CONFIG;
   dmx_param_config(DMX_PORT, &config);
 
