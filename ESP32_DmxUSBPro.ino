@@ -142,6 +142,7 @@ void processMessage() {
     resp_buffer[4] = RefreshRate;
     // Copy user config into response buffer
     memcpy(&resp_buffer[5], user_config, user_config_size);
+    sendResponse(DMX_PRO_GET_WIDGET_PARAMS, 5+user_config_size, resp_buffer);
     break;
   case DMX_PRO_SET_WIDGET_PARAMS:
     dmx_set_mode(DMX_PORT, DMX_MODE_READ);
