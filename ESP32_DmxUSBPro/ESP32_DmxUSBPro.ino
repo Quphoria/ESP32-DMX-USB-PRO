@@ -42,6 +42,7 @@
 #define DMX_BAUD_RATE 250000 // typical baud rate - 250000
 #define DMX_USB_BAUD_RATE 57600 // technically DMX USB Pro has no baud rate, but have seen others using this
 #define NUM_SLOTS 100 // Number of slots for esp_dmx
+// #define DMX_RX_DEBUG
 
 // Pin Definitions
 #define DMX_USB_RXD 9
@@ -112,6 +113,9 @@ void setup() {
   Serial.println("Widget Starting");
   USBAPIResponseMutex = xSemaphoreCreateMutex();
   Serial.println("Setup - EEPROM");
+  if (!EEPROM.begin(512)) {
+    Serial.println("EEPROM failed to initialise");
+  }
   loadEEPROMData();
   Serial.println("Setup - Serial1");
   Serial1.begin(DMX_USB_BAUD_RATE, SERIAL_8N1, DMX_USB_RXD, DMX_USB_TXD);
@@ -139,23 +143,32 @@ void loadEEPROMData() {
     for (unsigned int i = 0; i < 508; i++) {
       user_config[i] = EEPROM.read(4+i);
     }
+  } else {
+    saveEEPROMData();
   }
 }
 
-void EEPROMupdate(unsigned int address, unsigned char value) {
+unsigned char EEPROMupdate(unsigned int address, unsigned char value) {
   if (EEPROM.read(address) != value) {
     EEPROM.write(address, value);
+    return 1;
   }
+  return 0;
 }
 
 void saveEEPROMData() {
-  EEPROMupdate(0, 0x01);
-  EEPROMupdate(1, BreakTime);
-  EEPROMupdate(2, MaBTime);
-  EEPROMupdate(3, RefreshRate);
+  unsigned char changed = 0;
+  changed |= EEPROMupdate(0, 0x01);
+  changed |= EEPROMupdate(1, BreakTime);
+  changed |= EEPROMupdate(2, MaBTime);
+  changed |= EEPROMupdate(3, RefreshRate);
   for (unsigned int i = 0; i < 508; i++) {
-    EEPROMupdate(4+i, user_config[i]);
+    changed |= EEPROMupdate(4+i, user_config[i]);
   }
+  if (changed) {
+    EEPROM.commit();
+  }
+  Serial.println("EEPROM Written");
 }
 
 // Serial Functions
@@ -411,8 +424,10 @@ void DMXRecvTask(void *parameter) {
     if (xQueueReceive(dmx_queue, &event, portMAX_DELAY)) {
       switch (event.status) {
         case DMX_OK: { // Create scope for local variables
+            #ifdef DMX_RX_DEBUG
             printf("Received packet with start code: %02X and size: %i\n",
               event.start_code, event.size);
+            #endif
             // data is ok - read the packet into our buffer
             // Prefix RX packet with a 0
             unsigned char dmx_rx_packet[DMX_MAX_PACKET_SIZE+1];
@@ -423,34 +438,44 @@ void DMXRecvTask(void *parameter) {
           break;
 
         case DMX_ERR_IMPROPER_SLOT:
+          #ifdef DMX_RX_DEBUG
           printf("Received malformed byte at slot %i\n", event.size);
+          #endif
           // a slot in the packet is malformed - possibly a glitch due to the
           //  XLR connector? will need some more investigation
           // data can be recovered up until event.size
           break;
 
         case DMX_ERR_PACKET_SIZE:
+          #ifdef DMX_RX_DEBUG
           printf("Packet size %i is invalid\n", event.size);
+          #endif
           // the host DMX device is sending a bigger packet than it should
           // data may be recoverable but something went very wrong to get here
           break;
 
         case DMX_ERR_BUFFER_SIZE:
+          #ifdef DMX_RX_DEBUG
           printf("User DMX buffer is too small - received %i slots\n", 
             event.size);
+          #endif
           // whoops - our buffer isn't big enough
           // this code will not run if buffer size is set to DMX_MAX_PACKET_SIZE
           break;
 
         case DMX_ERR_DATA_OVERFLOW:
+          #ifdef DMX_RX_DEBUG
           printf("Data could not be processed in time\n");
+          #endif
           // the UART FIFO overflowed
           // this could occur if the interrupt mask is misconfigured or if the
           //  DMX ISR is constantly preempted
           break;
       }
     } else {
+      #ifdef DMX_RX_DEBUG
       printf("Lost DMX signal\n");
+      #endif
       // haven't received a packet in DMX_PACKET_TIMEOUT_TICK ticks
       // handle packet timeout...
     }
