@@ -70,7 +70,7 @@ unsigned char user_config[508];
 unsigned char state;
 unsigned char message_type;
 unsigned int dataSize;
-unsigned int index;
+unsigned int data_index;
 unsigned char data_buffer[600];
 
 // DMX buffers
@@ -141,13 +141,13 @@ void checkSerial() {
       break;
     case MSG_DATA_LEN_MSB:
       dataSize += (c << 8) & 0xff00;
-      index = 0;
-      state = index == dataSize ? MSG_END : MSG_DATA;
+      data_index = 0;
+      state = data_index == dataSize ? MSG_END : MSG_DATA;
       break;
     case MSG_DATA:
-      data_buffer[index] = c;
-      index++;
-      if (index >= dataSize) state = MSG_END;
+      data_buffer[data_index] = c;
+      data_index++;
+      if (data_index >= dataSize) state = MSG_END;
       break;
     case MSG_END:
       if (c == DMX_PRO_END_MSG) {
@@ -196,26 +196,27 @@ void processMessage() {
       }
       sendResponse(DMX_PRO_GET_WIDGET_PARAMS, 5+user_config_size, resp_buffer);
       break;
-    case DMX_PRO_SET_WIDGET_PARAMS:
-      dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-      unsigned char param_changed = 0;
-      user_config_size = (data_buffer[1] << 8) | data_buffer[0];
-      param_changed |= BreakTime != data_buffer[2];
-      BreakTime = data_buffer[2];
-      param_changed |= MaBTime != data_buffer[3];
-      MaBTime = data_buffer[3];
-      param_changed |= RefreshRate != data_buffer[4];
-      RefreshRate = data_buffer[4];
-      if (user_config_size != 0) {
-        param_changed |= memcmp(user_config, &data_buffer[5], user_config_size) != 0;
-        memcpy(user_config, &data_buffer[5], user_config_size);
-      }
-      dmx_set_break_num(DMX_PORT, calculateBreakNum());
-      dmx_set_idle_num(DMX_PORT, calculateIdleNum());
-      if (param_changed) {
-        // Change timer period first, as if it breaks the device, the EEPROM data won't be changed
-        xTimerChangePeriod(DMXRefreshTimer, calculateRefreshTimerInterval(), 100);
-        saveEEPROMData();
+    case DMX_PRO_SET_WIDGET_PARAMS: { // Put in scope for local variable
+        dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+        unsigned char param_changed = 0;
+        user_config_size = (data_buffer[1] << 8) | data_buffer[0];
+        param_changed |= BreakTime != data_buffer[2];
+        BreakTime = data_buffer[2];
+        param_changed |= MaBTime != data_buffer[3];
+        MaBTime = data_buffer[3];
+        param_changed |= RefreshRate != data_buffer[4];
+        RefreshRate = data_buffer[4];
+        if (user_config_size != 0) {
+          param_changed |= memcmp(user_config, &data_buffer[5], user_config_size) != 0;
+          memcpy(user_config, &data_buffer[5], user_config_size);
+        }
+        dmx_set_break_num(DMX_PORT, calculateBreakNum());
+        dmx_set_idle_num(DMX_PORT, calculateIdleNum());
+        if (param_changed) {
+          // Change timer period first, as if it breaks the device, the EEPROM data won't be changed
+          xTimerChangePeriod(DMXRefreshTimer, calculateRefreshTimerInterval(), 100);
+          saveEEPROMData();
+        }
       }
       break;
     case DMX_PRO_SEND_PACKET:
@@ -316,7 +317,6 @@ void setupDMX() {
     .break_num = calculateBreakNum(), 
     .idle_num = calculateIdleNum()
   };
-  const dmx_config_t config = DMX_DEFAULT_CONFIG;
   dmx_param_config(DMX_PORT, &config);
 
   // then set the communication pins...
@@ -370,15 +370,16 @@ void DMXRecvTask(void *parameter) {
   while (1) {
     if (xQueueReceive(dmx_queue, &event, DMX_PACKET_TIMEOUT_TICK)) {
       switch (event.status) {
-        case DMX_OK:
-          printf("Received packet with start code: %02X and size: %i\n",
-            event.start_code, event.size);
-          // data is ok - read the packet into our buffer
-          // Prefix RX packet with a 0
-          unsigned char dmx_rx_packet[DMX_MAX_PACKET_SIZE+1];
-          dmx_rx_packet[0] = 0; // Set Receive Status Byte
-          dmx_read_packet(DMX_PORT, &dmx_rx_packet[1], event.size);
-          handleRecvDMXPacket(event.size, dmx_rx_packet); // I assume the start code is still in the packet?
+        case DMX_OK: { // Create scope for local variables
+            printf("Received packet with start code: %02X and size: %i\n",
+              event.start_code, event.size);
+            // data is ok - read the packet into our buffer
+            // Prefix RX packet with a 0
+            unsigned char dmx_rx_packet[DMX_MAX_PACKET_SIZE+1];
+            dmx_rx_packet[0] = 0; // Set Receive Status Byte
+            dmx_read_packet(DMX_PORT, &dmx_rx_packet[1], event.size);
+            handleRecvDMXPacket(event.size, dmx_rx_packet); // I assume the start code is still in the packet?
+          }
           break;
 
         case DMX_ERR_IMPROPER_SLOT:
