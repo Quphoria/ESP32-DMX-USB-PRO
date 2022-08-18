@@ -1,0 +1,5 @@
+{
+    "sketch": "ESP32_DmxUSBPro\\ESP32_DmxUSBPro.ino",
+    "configuration": "PSRAM=disabled,PartitionScheme=default,CPUFreq=240,FlashMode=qio,FlashFreq=80,FlashSize=4M,UploadSpeed=115200,LoopCore=1,EventsCore=0,DebugLevel=none",
+    "board": "esp32:esp32:esp32"
+}

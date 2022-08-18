@@ -50,8 +50,6 @@
 - EEPROM Load/Save Methods
 */
 
-#include <Arduino_FreeRTOS.h>
-#include <semphr.h>
 #include <esp_dmx.h>
 
 QueueHandle_t dmx_queue;
@@ -66,7 +64,7 @@ unsigned char recv_dmx_on_change = 0;
 unsigned char BreakTime = 9; // 9-127
 unsigned char MaBTime = 1; // 1-127
 unsigned char RefreshRate = 0; // 0-40
-unsigned char[508] user_config;
+unsigned char user_config[508];
 
 // USB API state
 unsigned char state;
@@ -77,9 +75,9 @@ unsigned char data_buffer[600];
 
 // DMX buffers
 unsigned char dmx_buffer_select = 0;
-unsigned char[DMX_MAX_PACKET_SIZE] dmx_buffer_a = {0};
-unsigned char[DMX_MAX_PACKET_SIZE] dmx_buffer_b = {0};
-unsigned char[DMX_MAX_PACKET_SIZE] dmx_rx = {0}; // Used to can generate dmx change messages
+unsigned char dmx_buffer_a[DMX_MAX_PACKET_SIZE] = {0};
+unsigned char dmx_buffer_b[DMX_MAX_PACKET_SIZE] = {0};
+unsigned char dmx_rx[DMX_MAX_PACKET_SIZE] = {0}; // Used to can generate dmx change messages
 
 // Function forward declarations
 void loadEEPROMData();
@@ -179,7 +177,10 @@ void processMessage() {
     case DMX_PRO_PROGRAM_FLASH:
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       // Just say the firmware was programmed
-      resp_buffer = "TRUE";
+      resp_buffer[0] = 'T';
+      resp_buffer[1] = 'R';
+      resp_buffer[2] = 'U';
+      resp_buffer[3] = 'E';
       sendResponse(DMX_PRO_PROGRAM_FLASH, 4, resp_buffer);
       break;
     case DMX_PRO_GET_WIDGET_PARAMS:
@@ -187,7 +188,7 @@ void processMessage() {
       resp_buffer[0] = FIRMWARE_VERSION;
       resp_buffer[1] = widget_mode;
       resp_buffer[2] = BreakTime;
-      resp_buffer[3] = MABTime;
+      resp_buffer[3] = MaBTime;
       resp_buffer[4] = RefreshRate;
       // Copy user config into response buffer
       if (user_config_size != 0) {
@@ -201,8 +202,8 @@ void processMessage() {
       user_config_size = (data_buffer[1] << 8) | data_buffer[0];
       param_changed |= BreakTime != data_buffer[2];
       BreakTime = data_buffer[2];
-      param_changed |= MABTime != data_buffer[3];
-      MABTime = data_buffer[3];
+      param_changed |= MaBTime != data_buffer[3];
+      MaBTime = data_buffer[3];
       param_changed |= RefreshRate != data_buffer[4];
       RefreshRate = data_buffer[4];
       if (user_config_size != 0) {
@@ -220,14 +221,14 @@ void processMessage() {
     case DMX_PRO_SEND_PACKET:
       dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
       if (dataSize > 0) {
-        sendDMX(data_buffer);
+        sendDMX(dataSize, data_buffer);
       }
       break;
     case DMX_PRO_SEND_RDM:
       // Send RDM then reset back to read mode
       dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
       if (dataSize > 0) {
-        sendDMX(data_buffer);
+        sendDMX(dataSize, data_buffer);
       }
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       break;
@@ -237,11 +238,11 @@ void processMessage() {
       break;
     case DMX_PRO_GET_SERIAL_NUMBER:
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-      resp_buffer[0] = SERIAL_NUMBER & 0xff
-      resp_buffer[1] = (SERIAL_NUMBER >> 8) & 0xff
-      resp_buffer[2] = (SERIAL_NUMBER >> 16) & 0xff
-      resp_buffer[3] = (SERIAL_NUMBER >> 24) & 0xff
-      sendResponse(DMX_PRO_GET_SERIAL_NUMBER, 4, resp_buffer)
+      resp_buffer[0] = SERIAL_NUMBER & 0xff;
+      resp_buffer[1] = (SERIAL_NUMBER >> 8) & 0xff;
+      resp_buffer[2] = (SERIAL_NUMBER >> 16) & 0xff;
+      resp_buffer[3] = (SERIAL_NUMBER >> 24) & 0xff;
+      sendResponse(DMX_PRO_GET_SERIAL_NUMBER, 4, resp_buffer);
       break;
     case DMX_PRO_SEND_RDM_DISCOVERY:
       // Send 38 byte RDM discover packet in data_buffer
@@ -272,9 +273,9 @@ void sendDMXRecvChanged(unsigned int dmx_data_length, unsigned char *data) {
       unsigned int start_byte_num = i >> 3; // Divide by 8
       unsigned int start_byte = start_byte_num << 3; // Multiply by 8
       unsigned int byte_offset = i - start_byte;
-      unsigned char[5] changed_bit_array = {0};
+      unsigned char changed_bit_array[5] = {0};
       unsigned char num_changed = 1;
-      unsigned char[40] changed_data;
+      unsigned char changed_data[40];
       changed_bit_array[byte_offset >> 3] |= 1 << (byte_offset & 0b111);
       changed_data[0] = data[i];
       dmx_rx[i] = data[i]; // Update rx buffer after we are done
@@ -287,7 +288,7 @@ void sendDMXRecvChanged(unsigned int dmx_data_length, unsigned char *data) {
           num_changed++;
         }
       }
-      unsigned char[1+5+40] resp_data;
+      unsigned char resp_data[1+5+40];
       resp_data[0] = start_byte_num;
       memcpy(&resp_data[1], changed_bit_array, 5);
       memcpy(&resp_data[6], changed_data, num_changed);
@@ -302,10 +303,10 @@ uint8_t calculateBreakNum() {
   return (uint8_t)((((double)BreakTime) * 10.67e-6) * (double)DMX_BAUD_RATE);
 }
 uint16_t calculateIdleNum() {
-  return (uint8_t)((((double)MABTime) * 10.67e-6) * (double)DMX_BAUD_RATE);
+  return (uint8_t)((((double)MaBTime) * 10.67e-6) * (double)DMX_BAUD_RATE);
 }
 unsigned int calculateRefreshTimerInterval() {
-  return (unsigned int)((1.0/(double)(min(40, RefreshRate))) / (double)portTICK_PERIOD_MS);
+  return (unsigned int)((1.0/(double)(min(40, (int)RefreshRate))) / (double)portTICK_PERIOD_MS);
 }
 
 void setupDMX() {
@@ -330,7 +331,7 @@ void setupDMX() {
 }
 
 void sendDMX(unsigned int length, unsigned char *data) {
-  unsigned char[DMX_MAX_PACKET_SIZE] dmx_packet = {0};
+  unsigned char dmx_packet[DMX_MAX_PACKET_SIZE] = {0};
   // Copy data into fixed length buffer
   memcpy(dmx_packet, data, length);
 
@@ -367,14 +368,14 @@ void DMXRefresh(TimerHandle_t pxTimer) {
 void DMXRecvTask(void *parameter) {
   dmx_event_t event;
   while (1) {
-    if (xQueueReceive(queue, &event, DMX_PACKET_TIMEOUT_TICK)) {
+    if (xQueueReceive(dmx_queue, &event, DMX_PACKET_TIMEOUT_TICK)) {
       switch (event.status) {
         case DMX_OK:
           printf("Received packet with start code: %02X and size: %i\n",
             event.start_code, event.size);
           // data is ok - read the packet into our buffer
           // Prefix RX packet with a 0
-          unsigned char[DMX_MAX_PACKET_SIZE+1] dmx_rx_packet;
+          unsigned char dmx_rx_packet[DMX_MAX_PACKET_SIZE+1];
           dmx_rx_packet[0] = 0; // Set Receive Status Byte
           dmx_read_packet(DMX_PORT, &dmx_rx_packet[1], event.size);
           handleRecvDMXPacket(event.size, dmx_rx_packet); // I assume the start code is still in the packet?
