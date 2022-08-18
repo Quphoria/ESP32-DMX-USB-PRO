@@ -50,6 +50,7 @@
 - Start Recv Task
 - Use the DMX RefreshRate to resend DMX messages
 - Implement USB API Response - Use a lock for this
+- EEPROM Load/Save Methods
 */
 
 #include "esp_dmx.h"
