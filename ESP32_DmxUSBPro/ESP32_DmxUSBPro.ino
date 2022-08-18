@@ -383,7 +383,8 @@ void DMXRefresh(TimerHandle_t pxTimer) {
 void DMXRecvTask(void *parameter) {
   dmx_event_t event;
   while (1) {
-    if (xQueueReceive(dmx_queue, &event, DMX_PACKET_TIMEOUT_TICK)) {
+    // if (xQueueReceive(dmx_queue, &event, DMX_PACKET_TIMEOUT_TICK)) {
+    if (xQueueReceive(dmx_queue, &event, portMAX_DELAY)) {
       switch (event.status) {
         case DMX_OK: { // Create scope for local variables
             printf("Received packet with start code: %02X and size: %i\n",
