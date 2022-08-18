@@ -43,6 +43,13 @@
 #define DMX_USB_BAUD_RATE 57600 // technically DMX USB Pro has no baud rate, but have seen others using this
 #define NUM_SLOTS 100 // Number of slots for esp_dmx
 
+// Pin Definitions
+#define DMX_USB_RXD 9
+#define DMX_USB_TXD 10
+#define DMX_TX  17
+#define DMX_RX  16
+#define DMX_RTS 21
+
 // TODO
 /*
 - Send RDM Discovery
@@ -101,14 +108,22 @@ SemaphoreHandle_t USBAPIResponseMutex;
 
 // Main code
 void setup() {
+  Serial.begin(115200); // For debugging
+  Serial.println("Widget Starting");
   USBAPIResponseMutex = xSemaphoreCreateMutex();
+  Serial.println("Setup - EEPROM");
   loadEEPROMData();
-  Serial.begin(DMX_USB_BAUD_RATE);
+  Serial.println("Setup - Serial1");
+  Serial1.begin(DMX_USB_BAUD_RATE, SERIAL_8N1, DMX_USB_RXD, DMX_USB_TXD);
   // change the TX pin according to the DMX shield you're using
+  Serial.println("Setup - DMX");
   setupDMX();
+  Serial.println("Setup - Recv Task");
   xTaskCreate(DMXRecvTask, "dmx_recv", 10000, NULL, 2, &DMXRecvTaskHandle);
+  Serial.println("Setup - Refresh Timer");
   DMXRefreshTimer = xTimerCreate("dmx_refresh", calculateRefreshTimerInterval(), pdTRUE, 0, DMXRefresh);
   state = MSG_START;
+  Serial.println("Widget Ready");
 }
 
 void loop() {
@@ -123,8 +138,8 @@ void saveEEPROMData() {}
 void checkSerial() {
   unsigned char c;
 
-  while(!Serial.available());
-  c = Serial.read();
+  while(!Serial1.available());
+  c = Serial1.read();
 
   switch (state)
   {
@@ -258,12 +273,12 @@ void processMessage() {
 
 void sendResponse(unsigned char label, unsigned int length, unsigned char *data) {
   xSemaphoreTake(USBAPIResponseMutex, portMAX_DELAY); 
-  Serial.write(DMX_PRO_START_MSG);
-  Serial.write(label);
-  Serial.write(length & 0xff);
-  Serial.write((length >> 8) & 0xff);
-  Serial.write(data, length);
-  Serial.write(DMX_PRO_END_MSG);
+  Serial1.write(DMX_PRO_START_MSG);
+  Serial1.write(label);
+  Serial1.write(length & 0xff);
+  Serial1.write((length >> 8) & 0xff);
+  Serial1.write(data, length);
+  Serial1.write(DMX_PRO_END_MSG);
   xSemaphoreGive(USBAPIResponseMutex); 
 }
 
@@ -304,7 +319,8 @@ uint8_t calculateBreakNum() {
   return (uint8_t)((((double)BreakTime) * 10.67e-6) * (double)DMX_BAUD_RATE);
 }
 uint16_t calculateIdleNum() {
-  return (uint8_t)((((double)MaBTime) * 10.67e-6) * (double)DMX_BAUD_RATE);
+  // Round up
+  return 1 + (uint8_t)((((double)MaBTime) * 10.67e-6) * (double)DMX_BAUD_RATE);
 }
 unsigned int calculateRefreshTimerInterval() {
   return (unsigned int)((1.0/(double)(min(40, (int)RefreshRate))) / (double)portTICK_PERIOD_MS);
@@ -320,8 +336,7 @@ void setupDMX() {
   dmx_param_config(DMX_PORT, &config);
 
   // then set the communication pins...
-  const int tx_io_num = 17, rx_io_num = 16, rts_io_num = 21;
-  dmx_set_pin(DMX_PORT, tx_io_num, rx_io_num, rts_io_num);
+  dmx_set_pin(DMX_PORT, DMX_TX, DMX_RX, DMX_RTS);
 
   // and install the driver!
   dmx_driver_install(DMX_PORT, DMX_MAX_PACKET_SIZE, 10, &dmx_queue, 

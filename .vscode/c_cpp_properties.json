@@ -212,7 +212,7 @@
                 "C:\\Users\\TNT_SAMUEL\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.4\\tools\\sdk\\esp32\\include\\esp32-camera\\driver\\include",
                 "C:\\Users\\TNT_SAMUEL\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.4\\tools\\sdk\\esp32\\include\\esp32-camera\\conversions\\include",
                 "C:\\Users\\TNT_SAMUEL\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.4\\tools\\sdk\\esp32\\include\\fb_gfx\\include",
-                "C:\\Users\\TNT_SAMUEL\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.4\\tools\\sdk\\esp32\\qio_qspi\\include",
+                "C:\\Users\\TNT_SAMUEL\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.4\\tools\\sdk\\esp32\\dout_qspi\\include",
                 "C:\\Users\\TNT_SAMUEL\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.4\\cores\\esp32",
                 "C:\\Users\\TNT_SAMUEL\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.4\\variants\\esp32",
                 "C:\\Users\\TNT_SAMUEL\\Documents\\Arduino\\libraries\\esp_dmx\\src",
