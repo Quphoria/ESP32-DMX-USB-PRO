@@ -52,7 +52,9 @@
 - EEPROM Load/Save Methods
 */
 
-#include "esp_dmx.h"
+#include <Arduino_FreeRTOS.h>
+#include <semphr.h>
+#include <esp_dmx.h>
 
 QueueHandle_t dmx_queue;
 
@@ -84,25 +86,45 @@ unsigned char[DMX_MAX_PACKET_SIZE] dmx_rx = {0}; // Used to can generate dmx cha
 // Function forward declarations
 void loadEEPROMData();
 void saveEEPROMData();
+void checkSerial();
 void processMessage();
 void sendResponse(unsigned char label, unsigned int length, unsigned char *data);
 void sendDMXRecvChanged(unsigned int dmx_data_length, unsigned char *data);
 uint8_t calculateBreakNum();
 uint16_t calculateIdleNum();
+unsigned int calculateRefreshTimerInterval();
 void setupDMX();
 void sendDMX(unsigned int length, unsigned char *data);
-void DMXRecvTask();
+void DMXRefresh(TimerHandle_t pxTimer);
+void DMXRecvTask(void *parameter);
 void handleRecvDMXPacket(unsigned int length, unsigned char* data);
 
+TimerHandle_t DMXRefreshTimer;
+TaskHandle_t DMXRecvTaskHandle;
+SemaphoreHandle_t USBAPIResponseMutex;
+
+// Main code
 void setup() {
+  USBAPIResponseMutex = xSemaphoreCreateMutex();
   loadEEPROMData();
   Serial.begin(DMX_USB_BAUD_RATE);
   // change the TX pin according to the DMX shield you're using
   setupDMX();
+  xTaskCreate(DMXRecvTask, "dmx_recv", 10000, NULL, 2, &DMXRecvTaskHandle);
+  DMXRefreshTimer = xTimerCreate("dmx_refresh", calculateRefreshTimerInterval(), pdTRUE, 0, DMXRefresh);
   state = MSG_START;
 }
 
 void loop() {
+  checkSerial();
+}
+
+// EEPROM Functions
+void loadEEPROMData() {}
+void saveEEPROMData() {}
+
+// Serial Functions
+void checkSerial() {
   unsigned char c;
 
   while(!Serial.available());
@@ -191,7 +213,11 @@ void processMessage() {
       }
       dmx_set_break_num(DMX_PORT, calculateBreakNum());
       dmx_set_idle_num(DMX_PORT, calculateIdleNum());
-      if (param_changed) saveEEPROMData();
+      if (param_changed) {
+        // Change timer period first, as if it breaks the device, the EEPROM data won't be changed
+        xTimerChangePeriod(DMXRefreshTimer, calculateRefreshTimerInterval(), 100);
+        saveEEPROMData();
+      }
       break;
     case DMX_PRO_SEND_PACKET:
       dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
@@ -231,7 +257,14 @@ void processMessage() {
 }
 
 void sendResponse(unsigned char label, unsigned int length, unsigned char *data) {
-
+  xSemaphoreTake(USBAPIResponseMutex, portMAX_DELAY); 
+  Serial.write(DMX_PRO_START_MSG);
+  Serial.write(label);
+  Serial.write(length & 0xff);
+  Serial.write((length >> 8) & 0xff);
+  Serial.write(data, length);
+  Serial.write(DMX_PRO_END_MSG);
+  xSemaphoreGive(USBAPIResponseMutex); 
 }
 
 void sendDMXRecvChanged(unsigned int dmx_data_length, unsigned char *data) {
@@ -273,6 +306,9 @@ uint8_t calculateBreakNum() {
 uint16_t calculateIdleNum() {
   return (uint8_t)((((double)MABTime) * 10.67e-6) * (double)DMX_BAUD_RATE);
 }
+unsigned int calculateRefreshTimerInterval() {
+  return (unsigned int)((1.0/(double)(min(40, RefreshRate))) / (double)portTICK_PERIOD_MS);
+}
 
 void setupDMX() {
   // first configure the UART...
@@ -300,6 +336,12 @@ void sendDMX(unsigned int length, unsigned char *data) {
   // Copy data into fixed length buffer
   memcpy(dmx_packet, data, length);
 
+  if (data[0] == DMX_START_CODE) {
+    // Copy dmx packet into buffer then switch the buffers
+    memcpy(dmx_buffer_select ? dmx_buffer_a : dmx_buffer_b, data, length);
+    dmx_buffer_select ^= 1;
+  }
+
   // block until we are ready to send another packet
   dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
     
@@ -307,13 +349,24 @@ void sendDMX(unsigned int length, unsigned char *data) {
   dmx_send_packet(DMX_PORT, NUM_SLOTS);
 
   if (data[0] == DMX_START_CODE) {
-    // Copy dmx packet into buffer then switch the buffers
-    memcpy(dmx_buffer_select ? dmx_buffer_a : dmx_buffer_b, data, length);
-    dmx_buffer_select ^= 1;
+    xTimerReset(DMXRefreshTimer, 10);
   }
 }
 
-void DMXRecvTask() {
+void DMXRefresh(TimerHandle_t pxTimer) {
+  dmx_mode_t dmx_mode = DMX_MODE_READ;
+  dmx_get_mode(DMX_PORT, &dmx_mode);
+  if (dmx_mode == DMX_MODE_WRITE) {
+    // block until we are ready to send another packet
+    dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
+
+    // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
+    dmx_write_packet(DMX_PORT, dmx_buffer_select ? dmx_buffer_b : dmx_buffer_a, NUM_SLOTS);
+    dmx_send_packet(DMX_PORT, NUM_SLOTS);
+  }
+}
+
+void DMXRecvTask(void *parameter) {
   dmx_event_t event;
   while (1) {
     if (xQueueReceive(queue, &event, DMX_PACKET_TIMEOUT_TICK)) {
