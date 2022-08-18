@@ -46,6 +46,7 @@
 // TODO
 /*
 - Send RDM Discovery
+- Handle RDM Messages
 - EEPROM Load/Save Methods
 */
 
