@@ -28,6 +28,7 @@
 #define MSG_DATA_LEN_MSB  4
 #define MSG_DATA          5
 #define MSG_END           6
+#define MSG_ERROR         7 // Go to this state when packet breaks
 
 // Firmware Variety
 #define FIRMWARE_DMX        1
@@ -70,6 +71,8 @@ unsigned char[513] dmx_buffer_a = {0};
 unsigned char[513] dmx_buffer_b = {0};
 
 // Function forward declarations
+void loadEEPROMData();
+void saveEEPROMData();
 void setupDMX();
 void processMessage();
 void sendResponse(unsigned char label, unsigned int length, unsigned char *data);
@@ -77,6 +80,7 @@ uint8_t calculateBreakNum();
 uint16_t calculateIdleNum();
 
 void setup() {
+  loadEEPROMData();
   Serial.begin(57600);
   // change the TX pin according to the DMX shield you're using
   setupDMX();
@@ -110,22 +114,21 @@ void loop() {
   case MSG_DATA:
     data_buffer[index] = c;
     index++;
-    if (index >= dataSize) {
-      state = MSG_END;
-    }
+    if (index >= dataSize) state = MSG_END;
     break;
   case MSG_END:
     if (c == DMX_PRO_END_MSG) {
       state = MSG_START;
       processMessage();
-    }
+    } else state = MSG_ERROR;
     break;
+  case MSG_ERROR:
   default:
     // We have lost our state?
     // Wait for next possible end message (could be false positive?)
     if (c == DMX_PRO_END_MSG) {
       state = MSG_START;
-    }
+    } else state = MSG_ERROR;
     break;
   }
 }
@@ -145,25 +148,35 @@ void processMessage() {
     sendResponse(DMX_PRO_PROGRAM_FLASH, 4, resp_buffer);
     break;
   case DMX_PRO_GET_WIDGET_PARAMS:
-    user_config_size = (data_buffer[1] << 8) | data_buffer[0]
+    user_config_size = (data_buffer[1] << 8) | data_buffer[0];
     resp_buffer[0] = FIRMWARE_VERSION;
     resp_buffer[1] = widget_mode;
     resp_buffer[2] = BreakTime;
     resp_buffer[3] = MABTime;
     resp_buffer[4] = RefreshRate;
     // Copy user config into response buffer
-    memcpy(&resp_buffer[5], user_config, user_config_size);
+    if (user_config_size != 0) {
+      memcpy(&resp_buffer[5], user_config, user_config_size);
+    }
     sendResponse(DMX_PRO_GET_WIDGET_PARAMS, 5+user_config_size, resp_buffer);
     break;
   case DMX_PRO_SET_WIDGET_PARAMS:
     dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-    user_config_size = (data_buffer[1] << 8) | data_buffer[0]
-    BreakTime = data_buffer[2]
-    MABTime = data_buffer[3]
-    RefreshRate = data_buffer[4]
-    memcpy(user_config, &data_buffer[5], user_config_size);
+    unsigned char param_changed = 0;
+    user_config_size = (data_buffer[1] << 8) | data_buffer[0];
+    param_changed |= BreakTime != data_buffer[2];
+    BreakTime = data_buffer[2];
+    param_changed |= MABTime != data_buffer[3];
+    MABTime = data_buffer[3];
+    param_changed |= RefreshRate != data_buffer[4];
+    RefreshRate = data_buffer[4];
+    if (user_config_size != 0) {
+      param_changed |= memcmp(user_config, &data_buffer[5], user_config_size) != 0;
+      memcpy(user_config, &data_buffer[5], user_config_size);
+    }
     dmx_set_break_num(DMX_PORT, calculateBreakNum());
     dmx_set_idle_num(DMX_PORT, calculateIdleNum());
+    if (param_changed) saveEEPROMData();
     break;
   case DMX_PRO_SEND_PACKET:
     dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
