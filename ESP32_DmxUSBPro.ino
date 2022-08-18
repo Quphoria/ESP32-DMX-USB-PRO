@@ -13,11 +13,11 @@
 #define DMX_PRO_PROGRAM_FLASH       2
 #define DMX_PRO_GET_WIDGET_PARAMS   3
 #define DMX_PRO_SET_WIDGET_PARAMS   4
-#define DMX_PRO_RECV_PACKET         5 // NYI
-#define DMX_PRO_SEND_PACKET         6 // NYI "periodically send a DMX packet" mode
+#define DMX_PRO_RECV_PACKET         5
+#define DMX_PRO_SEND_PACKET         6 // "periodically send a DMX packet" mode
 #define DMX_PRO_SEND_RDM            7 // NYI
 #define DMX_PRO_RECV_DMX_ON_CHANGE  8
-#define DMX_PRO_RECV_CHANGED_PACKET 9 // NYI
+#define DMX_PRO_RECV_CHANGED_PACKET 9
 #define DMX_PRO_GET_SERIAL_NUMBER   10
 #define DMX_PRO_SEND_RDM_DISCOVERY  11 // NYI
 
@@ -36,18 +36,27 @@
 #define FIRMWARE_RDM_SNIFF  3
 
 // Configuration
-#define DMX_PORT = DMX_NUM_2
+#define DMX_PORT DMX_NUM_2
 #define FIRMWARE_VERSION 144
 #define SERIAL_NUMBER 0x0ffffffff // Not sure why the leading 0, should be 4 bytes, maybe documentation meant 0x
 #define DMX_BAUD_RATE 250000 // typical baud rate - 250000
 #define DMX_USB_BAUD_RATE 57600 // technically DMX USB Pro has no baud rate, but have seen others using this
+#define NUM_SLOTS 100 // Number of slots for esp_dmx
+
+// TODO
+/*
+- Send RDM
+- Send RDM Discovery
+- Start Recv Task
+- Use the DMX RefreshRate to resend DMX messages
+- Implement USB API Response - Use a lock for this
+*/
 
 #include "esp_dmx.h"
 
 QueueHandle_t dmx_queue;
 
 // Device state
-
 unsigned char widget_mode = FIRMWARE_DMX;
 unsigned char recv_dmx_on_change = 0;
 
@@ -68,17 +77,22 @@ unsigned char data_buffer[600];
 
 // DMX buffers
 unsigned char dmx_buffer_select = 0;
-unsigned char[513] dmx_buffer_a = {0};
-unsigned char[513] dmx_buffer_b = {0};
+unsigned char[DMX_MAX_PACKET_SIZE] dmx_buffer_a = {0};
+unsigned char[DMX_MAX_PACKET_SIZE] dmx_buffer_b = {0};
+unsigned char[DMX_MAX_PACKET_SIZE] dmx_rx = {0}; // Used to can generate dmx change messages
 
 // Function forward declarations
 void loadEEPROMData();
 void saveEEPROMData();
-void setupDMX();
 void processMessage();
 void sendResponse(unsigned char label, unsigned int length, unsigned char *data);
+void sendDMXRecvChanged(unsigned int dmx_data_length, unsigned char *data);
 uint8_t calculateBreakNum();
 uint16_t calculateIdleNum();
+void setupDMX();
+void sendDMX(unsigned int length, unsigned char *data);
+void DMXRecvTask();
+void handleRecvDMXPacket(unsigned int length, unsigned char* data);
 
 void setup() {
   loadEEPROMData();
@@ -96,41 +110,41 @@ void loop() {
 
   switch (state)
   {
-  case MSG_START:
-    if (c == DMX_PRO_START_MSG) state = MSG_LABEL;
-    break;
-  case MSG_LABEL:
-    message_type = c;
-    state = MSG_DATA_LEN_LSB;
-    break;
-  case MSG_DATA_LEN_LSB:
-    dataSize = c & 0xff;
-    state = MSG_DATA_LEN_MSB;
-    break;
-  case MSG_DATA_LEN_MSB:
-    dataSize += (c << 8) & 0xff00;
-    index = 0;
-    state = index == dataSize ? MSG_END : MSG_DATA;
-    break;
-  case MSG_DATA:
-    data_buffer[index] = c;
-    index++;
-    if (index >= dataSize) state = MSG_END;
-    break;
-  case MSG_END:
-    if (c == DMX_PRO_END_MSG) {
-      state = MSG_START;
-      processMessage();
-    } else state = MSG_ERROR;
-    break;
-  case MSG_ERROR:
-  default:
-    // We have lost our state?
-    // Wait for next possible end message (could be false positive?)
-    if (c == DMX_PRO_END_MSG) {
-      state = MSG_START;
-    } else state = MSG_ERROR;
-    break;
+    case MSG_START:
+      if (c == DMX_PRO_START_MSG) state = MSG_LABEL;
+      break;
+    case MSG_LABEL:
+      message_type = c;
+      state = MSG_DATA_LEN_LSB;
+      break;
+    case MSG_DATA_LEN_LSB:
+      dataSize = c & 0xff;
+      state = MSG_DATA_LEN_MSB;
+      break;
+    case MSG_DATA_LEN_MSB:
+      dataSize += (c << 8) & 0xff00;
+      index = 0;
+      state = index == dataSize ? MSG_END : MSG_DATA;
+      break;
+    case MSG_DATA:
+      data_buffer[index] = c;
+      index++;
+      if (index >= dataSize) state = MSG_END;
+      break;
+    case MSG_END:
+      if (c == DMX_PRO_END_MSG) {
+        state = MSG_START;
+        processMessage();
+      } else state = MSG_ERROR;
+      break;
+    case MSG_ERROR:
+    default:
+      // We have lost our state?
+      // Wait for next possible end message (could be false positive?)
+      if (c == DMX_PRO_END_MSG) {
+        state = MSG_START;
+      } else state = MSG_ERROR;
+      break;
   }
 }
 
@@ -139,85 +153,115 @@ void processMessage() {
   unsigned char resp_buffer[600];
   switch (message_type)
   {
-  case DMX_PRO_REPROGRAM_REQ:
-    dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-    break;
-  case DMX_PRO_PROGRAM_FLASH:
-    dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-    // Just say the firmware was programmed
-    resp_buffer = "TRUE";
-    sendResponse(DMX_PRO_PROGRAM_FLASH, 4, resp_buffer);
-    break;
-  case DMX_PRO_GET_WIDGET_PARAMS:
-    user_config_size = (data_buffer[1] << 8) | data_buffer[0];
-    resp_buffer[0] = FIRMWARE_VERSION;
-    resp_buffer[1] = widget_mode;
-    resp_buffer[2] = BreakTime;
-    resp_buffer[3] = MABTime;
-    resp_buffer[4] = RefreshRate;
-    // Copy user config into response buffer
-    if (user_config_size != 0) {
-      memcpy(&resp_buffer[5], user_config, user_config_size);
-    }
-    sendResponse(DMX_PRO_GET_WIDGET_PARAMS, 5+user_config_size, resp_buffer);
-    break;
-  case DMX_PRO_SET_WIDGET_PARAMS:
-    dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-    unsigned char param_changed = 0;
-    user_config_size = (data_buffer[1] << 8) | data_buffer[0];
-    param_changed |= BreakTime != data_buffer[2];
-    BreakTime = data_buffer[2];
-    param_changed |= MABTime != data_buffer[3];
-    MABTime = data_buffer[3];
-    param_changed |= RefreshRate != data_buffer[4];
-    RefreshRate = data_buffer[4];
-    if (user_config_size != 0) {
-      param_changed |= memcmp(user_config, &data_buffer[5], user_config_size) != 0;
-      memcpy(user_config, &data_buffer[5], user_config_size);
-    }
-    dmx_set_break_num(DMX_PORT, calculateBreakNum());
-    dmx_set_idle_num(DMX_PORT, calculateIdleNum());
-    if (param_changed) saveEEPROMData();
-    break;
-  case DMX_PRO_SEND_PACKET:
-    dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
-    if (dataSize > 0 && data_buffer[0] == DMX_START_CODE) {
-      for (unsigned int i = 1; i < dataSize; i++) {
-        // DmxMaster.write(i, data_buffer[i]);
+    case DMX_PRO_REPROGRAM_REQ:
+      dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+      break;
+    case DMX_PRO_PROGRAM_FLASH:
+      dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+      // Just say the firmware was programmed
+      resp_buffer = "TRUE";
+      sendResponse(DMX_PRO_PROGRAM_FLASH, 4, resp_buffer);
+      break;
+    case DMX_PRO_GET_WIDGET_PARAMS:
+      user_config_size = (data_buffer[1] << 8) | data_buffer[0];
+      resp_buffer[0] = FIRMWARE_VERSION;
+      resp_buffer[1] = widget_mode;
+      resp_buffer[2] = BreakTime;
+      resp_buffer[3] = MABTime;
+      resp_buffer[4] = RefreshRate;
+      // Copy user config into response buffer
+      if (user_config_size != 0) {
+        memcpy(&resp_buffer[5], user_config, user_config_size);
       }
-    }
-    break;
-  case DMX_PRO_SEND_RDM:
-    // Send RDM then reset back to read mode
-    dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
+      sendResponse(DMX_PRO_GET_WIDGET_PARAMS, 5+user_config_size, resp_buffer);
+      break;
+    case DMX_PRO_SET_WIDGET_PARAMS:
+      dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+      unsigned char param_changed = 0;
+      user_config_size = (data_buffer[1] << 8) | data_buffer[0];
+      param_changed |= BreakTime != data_buffer[2];
+      BreakTime = data_buffer[2];
+      param_changed |= MABTime != data_buffer[3];
+      MABTime = data_buffer[3];
+      param_changed |= RefreshRate != data_buffer[4];
+      RefreshRate = data_buffer[4];
+      if (user_config_size != 0) {
+        param_changed |= memcmp(user_config, &data_buffer[5], user_config_size) != 0;
+        memcpy(user_config, &data_buffer[5], user_config_size);
+      }
+      dmx_set_break_num(DMX_PORT, calculateBreakNum());
+      dmx_set_idle_num(DMX_PORT, calculateIdleNum());
+      if (param_changed) saveEEPROMData();
+      break;
+    case DMX_PRO_SEND_PACKET:
+      dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
+      if (dataSize > 0) {
+        sendDMX(data_buffer);
+      }
+      break;
+    case DMX_PRO_SEND_RDM:
+      // Send RDM then reset back to read mode
+      dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
 
-    dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-    break;
-  case DMX_PRO_RECV_DMX_ON_CHANGE:
-    dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-    recv_dmx_on_change = data_buffer[0] != 0; // Only 1 or 0
-    break;
-  case DMX_PRO_GET_SERIAL_NUMBER:
-    dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-    resp_buffer[0] = SERIAL_NUMBER & 0xff
-    resp_buffer[1] = (SERIAL_NUMBER >> 8) & 0xff
-    resp_buffer[2] = (SERIAL_NUMBER >> 16) & 0xff
-    resp_buffer[3] = (SERIAL_NUMBER >> 24) & 0xff
-    sendResponse(DMX_PRO_GET_SERIAL_NUMBER, 4, resp_buffer)
-    break;
-  case DMX_PRO_SEND_RDM_DISCOVERY:
-    // Send 38 byte RDM discover packet in data_buffer
-    dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
+      dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+      break;
+    case DMX_PRO_RECV_DMX_ON_CHANGE:
+      dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+      recv_dmx_on_change = data_buffer[0] != 0; // Only 1 or 0
+      break;
+    case DMX_PRO_GET_SERIAL_NUMBER:
+      dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+      resp_buffer[0] = SERIAL_NUMBER & 0xff
+      resp_buffer[1] = (SERIAL_NUMBER >> 8) & 0xff
+      resp_buffer[2] = (SERIAL_NUMBER >> 16) & 0xff
+      resp_buffer[3] = (SERIAL_NUMBER >> 24) & 0xff
+      sendResponse(DMX_PRO_GET_SERIAL_NUMBER, 4, resp_buffer)
+      break;
+    case DMX_PRO_SEND_RDM_DISCOVERY:
+      // Send 38 byte RDM discover packet in data_buffer
+      dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
 
-    dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-    break;
-  default:
-    break;
+      dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+      break;
+    default:
+      break;
   }
 }
 
 void sendResponse(unsigned char label, unsigned int length, unsigned char *data) {
 
+}
+
+void sendDMXRecvChanged(unsigned int dmx_data_length, unsigned char *data) {
+  // Wierd Compression algorithmn, defined in API Documentation
+  for (unsigned int i = 0; i < dmx_data_length; i++) {
+    if (data[i] != dmx_rx[i]) {
+      unsigned int start_byte_num = i >> 3; // Divide by 8
+      unsigned int start_byte = start_byte_num << 3; // Multiply by 8
+      unsigned int byte_offset = i - start_byte;
+      unsigned char[5] changed_bit_array = {0};
+      unsigned char num_changed = 1;
+      unsigned char[40] changed_data;
+      changed_bit_array[byte_offset >> 3] |= 1 << (byte_offset & 0b111);
+      changed_data[0] = data[i];
+      dmx_rx[i] = data[i]; // Update rx buffer after we are done
+      for (unsigned int x = i; x < start_byte_num + 40; x++) {
+        byte_offset++;
+        if (data[x] != dmx_rx[x]) {
+          changed_data[num_changed] = data[x];
+          dmx_rx[x] = data[x];
+          changed_bit_array[byte_offset >> 3] |= 1 << (byte_offset & 0b111);
+          num_changed++;
+        }
+      }
+      unsigned char[1+5+40] resp_data;
+      resp_data[0] = start_byte_num;
+      memcpy(&resp_data[1], changed_bit_array, 5);
+      memcpy(&resp_data[6], changed_data, num_changed);
+      sendResponse(DMX_PRO_RECV_CHANGED_PACKET, 6+num_changed, resp_data);
+      i = start_byte + 39; // Skip bytes handled by the change packet
+    }
+  }
 }
 
 // DMX Functions
@@ -247,4 +291,93 @@ void setupDMX() {
         ESP_INTR_FLAG_IRAM);
 
   dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+}
+
+void sendDMX(unsigned int length, unsigned char *data) {
+  unsigned char[DMX_MAX_PACKET_SIZE] dmx_packet = {0};
+  // Copy data into fixed length buffer
+  memcpy(dmx_packet, data, length);
+
+  // block until we are ready to send another packet
+  dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
+    
+  dmx_write_packet(DMX_PORT, dmx_packet, NUM_SLOTS);
+  dmx_send_packet(DMX_PORT, NUM_SLOTS);
+
+  if (data[0] == DMX_START_CODE) {
+    // Copy dmx packet into buffer then switch the buffers
+    memcpy(dmx_buffer_select ? dmx_buffer_a : dmx_buffer_b, data, length);
+    dmx_buffer_select ^= 1;
+  }
+}
+
+void DMXRecvTask() {
+  dmx_event_t event;
+  while (1) {
+    if (xQueueReceive(queue, &event, DMX_PACKET_TIMEOUT_TICK)) {
+      switch (event.status) {
+        case DMX_OK:
+          printf("Received packet with start code: %02X and size: %i\n",
+            event.start_code, event.size);
+          // data is ok - read the packet into our buffer
+          // Prefix RX packet with a 0
+          unsigned char[DMX_MAX_PACKET_SIZE+1] dmx_rx_packet;
+          dmx_rx_packet[0] = 0; // Set Receive Status Byte
+          dmx_read_packet(DMX_PORT, &dmx_rx_packet[1], event.size);
+          handleRecvDMXPacket(event.size, dmx_rx_packet); // I assume the start code is still in the packet?
+          break;
+
+        case DMX_ERR_IMPROPER_SLOT:
+          printf("Received malformed byte at slot %i\n", event.size);
+          // a slot in the packet is malformed - possibly a glitch due to the
+          //  XLR connector? will need some more investigation
+          // data can be recovered up until event.size
+          break;
+
+        case DMX_ERR_PACKET_SIZE:
+          printf("Packet size %i is invalid\n", event.size);
+          // the host DMX device is sending a bigger packet than it should
+          // data may be recoverable but something went very wrong to get here
+          break;
+
+        case DMX_ERR_BUFFER_SIZE:
+          printf("User DMX buffer is too small - received %i slots\n", 
+            event.size);
+          // whoops - our buffer isn't big enough
+          // this code will not run if buffer size is set to DMX_MAX_PACKET_SIZE
+          break;
+
+        case DMX_ERR_DATA_OVERFLOW:
+          printf("Data could not be processed in time\n");
+          // the UART FIFO overflowed
+          // this could occur if the interrupt mask is misconfigured or if the
+          //  DMX ISR is constantly preempted
+          break;
+      }
+    } else {
+      printf("Lost DMX signal\n");
+      // haven't received a packet in DMX_PACKET_TIMEOUT_TICK ticks
+      // handle packet timeout...
+    }
+  }
+}
+
+void handleRecvDMXPacket(unsigned int dmx_data_length, unsigned char* data) {
+  // Actual array length is dmx_data_length+1
+  if (dmx_data_length == 0) return;
+  unsigned char start_code = data[1];
+
+  switch (start_code) {
+    case DMX_START_CODE:
+      if (recv_dmx_on_change) {
+        // Skip recv status byte
+        sendDMXRecvChanged(dmx_data_length, &data[1]);
+      } else {
+        sendResponse(DMX_PRO_RECV_PACKET, dmx_data_length+1, data);
+      }
+      break;
+    case RDM_START_CODE:
+      sendResponse(DMX_PRO_RECV_PACKET, dmx_data_length+1, data);
+      break;
+  }
 }
