@@ -60,7 +60,16 @@ unsigned int dataSize;
 unsigned int index;
 unsigned char data_buffer[600];
 
+// DMX buffers
+unsigned char dmx_buffer_select = 0;
+unsigned char[513] dmx_buffer_a = {0};
+unsigned char[513] dmx_buffer_b = {0};
+
+// Function forward declarations
 void setupDMX();
+void processMessage();
+void sendResponse(unsigned char label, unsigned int length, unsigned char *data);
+
 
 void setup() {
   Serial.begin(57600);
@@ -68,9 +77,6 @@ void setup() {
   setupDMX();
   state = MSG_START;
 }
-
-void processMessage();
-void sendResponse(unsigned char label, unsigned int length, unsigned char *data);
 
 void loop() {
   unsigned char c;
