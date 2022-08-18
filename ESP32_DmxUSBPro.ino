@@ -45,7 +45,6 @@
 
 // TODO
 /*
-- Send RDM
 - Send RDM Discovery
 - Start Recv Task
 - Use the DMX RefreshRate to resend DMX messages
@@ -203,7 +202,9 @@ void processMessage() {
     case DMX_PRO_SEND_RDM:
       // Send RDM then reset back to read mode
       dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
-
+      if (dataSize > 0) {
+        sendDMX(data_buffer);
+      }
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       break;
     case DMX_PRO_RECV_DMX_ON_CHANGE:
