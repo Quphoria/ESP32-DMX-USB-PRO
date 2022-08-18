@@ -40,6 +40,7 @@
 #define FIRMWARE_VERSION 144
 #define SERIAL_NUMBER 0x0ffffffff // Not sure why the leading 0, should be 4 bytes, maybe documentation meant 0x
 #define DMX_BAUD_RATE 250000 // typical baud rate - 250000
+#define DMX_USB_BAUD_RATE 57600 // technically DMX USB Pro has no baud rate, but have seen others using this
 
 #include "esp_dmx.h"
 
@@ -81,7 +82,7 @@ uint16_t calculateIdleNum();
 
 void setup() {
   loadEEPROMData();
-  Serial.begin(57600);
+  Serial.begin(DMX_USB_BAUD_RATE);
   // change the TX pin according to the DMX shield you're using
   setupDMX();
   state = MSG_START;
