@@ -46,9 +46,6 @@
 // TODO
 /*
 - Send RDM Discovery
-- Start Recv Task
-- Use the DMX RefreshRate to resend DMX messages
-- Implement USB API Response - Use a lock for this
 - EEPROM Load/Save Methods
 */
 
