@@ -289,7 +289,7 @@ void setupDMX() {
 
   // and install the driver!
   dmx_driver_install(DMX_PORT, DMX_MAX_PACKET_SIZE, 10, &dmx_queue, 
-        ESP_INTR_FLAG_IRAM);
+    ESP_INTR_FLAG_IRAM);
 
   dmx_set_mode(DMX_PORT, DMX_MODE_READ);
 }
