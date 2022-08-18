@@ -1,9 +1,12 @@
 
+// DMX Constants
+// https://erg.abdn.ac.uk/users/gorry/eg3576/start-codes.html
+#define DMX_START_CODE 0
+#define RDM_START_CODE 0xcc
+
+// Enttec DMX USB PRO API Constants
 #define DMX_PRO_START_MSG 0x7E
 #define DMX_PRO_END_MSG 0xE7
-
-// https://erg.abdn.ac.uk/users/gorry/eg3576/start-codes.html
-#define DMX_START_CODE 0 
 
 // Enttec DMX USB PRO API Labels
 #define DMX_PRO_REPROGRAM_REQ       1
