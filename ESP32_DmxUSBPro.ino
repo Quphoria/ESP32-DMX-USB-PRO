@@ -234,7 +234,7 @@ void sendResponse(unsigned char label, unsigned int length, unsigned char *data)
 }
 
 void sendDMXRecvChanged(unsigned int dmx_data_length, unsigned char *data) {
-  // Wierd Compression algorithmn, defined in API Documentation
+  // Wierd Compression algorithm, defined in API Documentation
   for (unsigned int i = 0; i < dmx_data_length; i++) {
     if (data[i] != dmx_rx[i]) {
       unsigned int start_byte_num = i >> 3; // Divide by 8
