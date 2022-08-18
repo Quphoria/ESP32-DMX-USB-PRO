@@ -54,9 +54,9 @@
 /*
 - Send RDM Discovery
 - Handle RDM Messages
-- EEPROM Load/Save Methods
 */
 
+#include <EEPROM.h>
 #include <esp_dmx.h>
 
 QueueHandle_t dmx_queue;
@@ -131,8 +131,32 @@ void loop() {
 }
 
 // EEPROM Functions
-void loadEEPROMData() {}
-void saveEEPROMData() {}
+void loadEEPROMData() {
+  if (EEPROM.read(0) == 0x01)  {
+    BreakTime = EEPROM.read(1);
+    MaBTime = EEPROM.read(2);
+    RefreshRate = EEPROM.read(3);
+    for (unsigned int i = 0; i < 508; i++) {
+      user_config[i] = EEPROM.read(4+i);
+    }
+  }
+}
+
+void EEPROMupdate(unsigned int address, unsigned char value) {
+  if (EEPROM.read(address) != value) {
+    EEPROM.write(address, value);
+  }
+}
+
+void saveEEPROMData() {
+  EEPROMupdate(0, 0x01);
+  EEPROMupdate(1, BreakTime);
+  EEPROMupdate(2, MaBTime);
+  EEPROMupdate(3, RefreshRate);
+  for (unsigned int i = 0; i < 508; i++) {
+    EEPROMupdate(4+i, user_config[i]);
+  }
+}
 
 // Serial Functions
 void checkSerial() {

@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.ejs": "html",
+        "*.ovpn": "properties",
+        "*.html": "html",
+        "*.tcc": "cpp"
+    }
+}
