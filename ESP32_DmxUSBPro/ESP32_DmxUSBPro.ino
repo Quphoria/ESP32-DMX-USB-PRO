@@ -61,6 +61,7 @@
 #define DMX_BAUD_RATE 250000 // typical baud rate - 250000
 #define DMX_USB_BAUD_RATE 57600 // technically DMX USB Pro has no baud rate, but have seen others using this
 // #define DMX_RX_DEBUG
+#define DMX_RDM_DEBUG
 #define DMX_ENABLE_RDM
 #define ACT_LED_DMX_IN_TICKS  125 / portTICK_PERIOD_MS // 8Hz
 #define ACT_LED_DMX_OUT_TICKS 500 / portTICK_PERIOD_MS // 2Hz
@@ -652,18 +653,27 @@ unsigned char HandleRDM(unsigned char *rdm_data) {
             // Check lower or equal to higher bound
             if (memcmp(&rdm_data[24+RDM_UID_LENGTH], rdm_uid, RDM_UID_LENGTH) < 0) return 0;
             sendRDMDiscoverResponsePacket();
+            #ifdef DMX_RDM_DEBUG
+            printf("Sent RDM Discovery Response\n");
+            #endif
             return 0;
           case RDM_PID_DISC_MUTE:
             rdm_discovery_muted = 1;
             if (memcmp(&rdm_data[3], rdm_uid, RDM_UID_LENGTH) == 0) {
               SendRDMResponse(rdm_data, RDM_RESP_ACK, 2, rdm_disc_mute_control_field);
             }
+            #ifdef DMX_RDM_DEBUG
+            printf("RDM Discovery Muted\n");
+            #endif
             return 0;
           case RDM_PID_DISC_UNMUTE:
             rdm_discovery_muted = 0;
             if (memcmp(&rdm_data[3], rdm_uid, RDM_UID_LENGTH) == 0) {
               SendRDMResponse(rdm_data, RDM_RESP_ACK, 2, rdm_disc_mute_control_field);
             }
+            #ifdef DMX_RDM_DEBUG
+            printf("RDM Discovery Unmuted\n");
+            #endif
             return 0;
         }
       }
