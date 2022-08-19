@@ -98,7 +98,7 @@ const unsigned char rdm_broadcast_manufacturer_uid[RDM_UID_LENGTH] =
   {0x45, 0x4E, 0xff, 0xff, 0xff, 0xff};
 const unsigned char rdm_ack_timer_estimate[2] = {0x00, 0x01}; // 100ms
 const unsigned char rdm_disc_mute_control_field[2] = {0x00, 0b00000010}; // Support sub devices
-unsigned char rdm_disc_packet[24] = {
+unsigned char rdm_disc_packet[25] = { RDM_START_CODE,
   0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xAA,
   rdm_uid[0] & 0xAA, rdm_uid[0] & 0x55,
   rdm_uid[1] & 0xAA, rdm_uid[1] & 0x55,
@@ -106,7 +106,7 @@ unsigned char rdm_disc_packet[24] = {
   rdm_uid[3] & 0xAA, rdm_uid[3] & 0x55,
   rdm_uid[4] & 0xAA, rdm_uid[4] & 0x55,
   rdm_uid[5] & 0xAA, rdm_uid[5] & 0x55,
-  0x00, 0x00, 0x00, 0xff
+  0x00, 0x00, 0x00, 0x00 // Checksum to be calculated later
 };
 
 // Device state
@@ -161,6 +161,8 @@ unsigned char HandleRDM(unsigned char *rdm_data);
 void SendRDMResponse(unsigned char *req_data,
     unsigned char resp_type, unsigned char resp_length, unsigned char *resp_data);
 void calculateRDMDiscoverChecksum();
+void sendRDMDiscoverResponsePacket();
+void sendRDMQueuedMessage();
 
 QueueHandle_t dmx_queue;
 TimerHandle_t DMXRefreshTimer, ActivityLEDTimer;
@@ -642,15 +644,23 @@ unsigned char HandleRDM(unsigned char *rdm_data) {
       {
         switch (pid) {
           case RDM_PID_DISC_UNIQUE_BRANCH:
+            if (rdm_discovery_muted) return 0; // We are muted
             // This has been moved to DMX Driver since its not a normal request packet
-            // Do Nothing
+            if (rdm_data[23] != 2*RDM_UID_LENGTH) return 0; // Must be 2 UIDS long
+            // Check higher or equal to lower bound
+            if (memcmp(&rdm_data[24], rdm_uid, RDM_UID_LENGTH) > 0) return 0;
+            // Check lower or equal to higher bound
+            if (memcmp(&rdm_data[24+RDM_UID_LENGTH], rdm_uid, RDM_UID_LENGTH) < 0) return 0;
+            sendRDMDiscoverResponsePacket();
             return 0;
           case RDM_PID_DISC_MUTE:
+            rdm_discovery_muted = 1;
             if (memcmp(&rdm_data[3], rdm_uid, RDM_UID_LENGTH) == 0) {
               SendRDMResponse(rdm_data, RDM_RESP_ACK, 2, rdm_disc_mute_control_field);
             }
             return 0;
           case RDM_PID_DISC_UNMUTE:
+            rdm_discovery_muted = 0;
             if (memcmp(&rdm_data[3], rdm_uid, RDM_UID_LENGTH) == 0) {
               SendRDMResponse(rdm_data, RDM_RESP_ACK, 2, rdm_disc_mute_control_field);
             }
@@ -662,14 +672,7 @@ unsigned char HandleRDM(unsigned char *rdm_data) {
       if (pid == RDM_PID_QUEUED_MESSAGE) {
         if (rdm_queued_message_ready) {
           // Send packet
-          // block until we are ready to send another packet
-          dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
-
-          // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
-          dmx_write_packet(DMX_PORT, rdm_queued_message, DMX_MAX_PACKET_SIZE);
-          dmx_send_packet(DMX_PORT, DMX_MAX_PACKET_SIZE);
-          rdm_queued_message_ready = 0;
-          xSemaphoreGive(RDMQueueMutex); // Allow next message to get queued
+          sendRDMQueuedMessage();
           return 0;
         }
         // If queued message is not ready, and we are not waiting for the PC, forward to PC
@@ -739,8 +742,32 @@ void calculateRDMDiscoverChecksum() {
   for (unsigned int i = 0; i < 12; i++) {
     checksum += (uint16_t)rdm_disc_packet[8+i];
   }
-  rdm_disc_packet[20] = (checksum >> 8) & 0xAA;
-  rdm_disc_packet[21] = (checksum >> 8) & 0x55;
-  rdm_disc_packet[22] = checksum & 0xAA;
-  rdm_disc_packet[23] = checksum & 0x55;
+  rdm_disc_packet[21] = (checksum >> 8) & 0xAA;
+  rdm_disc_packet[22] = (checksum >> 8) & 0x55;
+  rdm_disc_packet[23] = checksum & 0xAA;
+  rdm_disc_packet[24] = checksum & 0x55;
+}
+
+void sendRDMDiscoverResponsePacket() {
+  // block until we are ready to send another packet
+  dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
+  dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
+
+  // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
+  dmx_write_packet(DMX_PORT, rdm_disc_packet, 25);
+  dmx_send_packet(DMX_PORT, 25);
+  dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+}
+
+void sendRDMQueuedMessage() {
+  // block until we are ready to send another packet
+  dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
+  dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
+
+  // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
+  dmx_write_packet(DMX_PORT, rdm_queued_message, DMX_MAX_PACKET_SIZE);
+  dmx_send_packet(DMX_PORT, DMX_MAX_PACKET_SIZE);
+  dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+  rdm_queued_message_ready = 0;
+  xSemaphoreGive(RDMQueueMutex); // Allow next message to get queued
 }
