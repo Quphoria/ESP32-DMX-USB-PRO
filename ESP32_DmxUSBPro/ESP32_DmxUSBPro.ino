@@ -77,7 +77,6 @@
 // TODO
 /*
 - Send RDM Discovery
-- Respond to RDM Discovery
 - Mode switch
 - RDM Sniff?
 */
