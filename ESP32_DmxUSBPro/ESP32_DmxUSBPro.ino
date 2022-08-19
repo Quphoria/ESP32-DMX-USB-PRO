@@ -162,7 +162,7 @@ void SendRDMResponse(unsigned char *req_data,
     unsigned char resp_type, unsigned char resp_length, unsigned char *resp_data);
 void calculateRDMDiscoverChecksum();
 
-QueueHandle_t dmx_queue, blink_queue;
+QueueHandle_t dmx_queue;
 TimerHandle_t DMXRefreshTimer;
 TaskHandle_t DMXRecvTaskHandle;
 SemaphoreHandle_t USBAPIResponseMutex, RDMQueueMutex;
