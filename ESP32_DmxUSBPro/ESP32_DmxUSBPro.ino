@@ -55,6 +55,7 @@
 /*
 - Send RDM Discovery
 - Handle RDM Messages
+- 
 */
 
 #include <EEPROM.h>
@@ -115,8 +116,7 @@ void setup() {
   Serial.println("Setup - EEPROM");
   if (!EEPROM.begin(512)) {
     Serial.println("EEPROM failed to initialise");
-  }
-  loadEEPROMData();
+  } else loadEEPROMData();
   Serial.println("Setup - Serial1");
   Serial1.begin(DMX_USB_BAUD_RATE, SERIAL_8N1, DMX_USB_RXD, DMX_USB_TXD);
   // change the TX pin according to the DMX shield you're using
