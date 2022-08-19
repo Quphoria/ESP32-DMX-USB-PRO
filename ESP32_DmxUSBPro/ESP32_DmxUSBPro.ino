@@ -64,7 +64,7 @@
 #define DMX_ENABLE_RDM
 #define ACT_LED_DMX_IN_TICKS  125 / portTICK_PERIOD_MS // 8Hz
 #define ACT_LED_DMX_OUT_TICKS 500 / portTICK_PERIOD_MS // 2Hz
-#define ACTIVITY_LED LED_BUILTIN
+#define ACTIVITY_LED 2
 
 // Pin Definitions
 #define DMX_USB_RXD 9
@@ -107,7 +107,7 @@ unsigned char rdm_disc_packet[24] = {
   rdm_uid[4] & 0xAA, rdm_uid[4] & 0x55,
   rdm_uid[5] & 0xAA, rdm_uid[5] & 0x55,
   0x00, 0x00, 0x00, 0xff
-}
+};
 
 // Device state
 unsigned char widget_mode = FIRMWARE_DMX;
@@ -189,7 +189,7 @@ void setup() {
   state = MSG_START;
   Serial.println("Setup - Activity Led Timer");
   pinMode(ACTIVITY_LED, OUTPUT);
-  ActivityLedTimer = xTimerCreate("activity_led", ACT_LED_DMX_OUT_TICKS, pdFALSE, 0, ActivityLed);
+  ActivityLEDTimer = xTimerCreate("activity_led", ACT_LED_DMX_OUT_TICKS, pdFALSE, 0, ActivityLed);
   Serial.println("Widget Ready");
 }
 
@@ -456,7 +456,7 @@ void sendDMX(unsigned int length, unsigned char *data) {
     #ifdef DMX_ENABLE_RDM
     if (rdm_queue_message) {
       rdm_queue_message = 0;
-      memcpy(rdm_queued_message, dmx_packet, length);
+      memcpy(rdm_queued_message, data, length);
       // Zero rest of packet
       if (length < DMX_MAX_PACKET_SIZE) {
         memset(&rdm_queued_message[length], 0, DMX_MAX_PACKET_SIZE - length);
@@ -506,7 +506,7 @@ void DMXRefresh(TimerHandle_t pxTimer) {
 }
 
 void ActivityLed(TimerHandle_t pxTimer) {
-  TickType_t led_period = xTimerGetPeriod( TimerHandle_t pxTimer );
+  TickType_t led_period = xTimerGetPeriod(pxTimer);
   // Turn LED On
   digitalWrite(ACTIVITY_LED, 1);
   vTaskDelay(led_period / 2); // Delay for 1/2 period
@@ -691,7 +691,7 @@ unsigned char HandleRDM(unsigned char *rdm_data) {
 }
 
 void SendRDMResponse(unsigned char *req_data,
-    unsigned char resp_type, unsigned char resp_length, unsigned char *resp_data) {
+    unsigned char resp_type, unsigned char resp_length, const unsigned char *resp_data) {
   unsigned char length = 24+resp_length;
 
   unsigned char rdm_packet[DMX_MAX_PACKET_SIZE];
@@ -719,7 +719,7 @@ void SendRDMResponse(unsigned char *req_data,
   rdm_packet[length] = (checksum >> 8) & 0xff;
   rdm_packet[length+1] = checksum & 0xff;
   if (length+2 < DMX_MAX_PACKET_SIZE) {
-    memset(&rdm_packet[length+2], 0, DMX_MAX_PACKET_SIZE-(length+2))
+    memset(&rdm_packet[length+2], 0, DMX_MAX_PACKET_SIZE-(length+2));
   }
 
   dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
