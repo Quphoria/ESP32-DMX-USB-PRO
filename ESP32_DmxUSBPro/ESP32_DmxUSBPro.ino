@@ -83,7 +83,7 @@
 */
 
 #include <EEPROM.h>
-#include <esp_dmx.h>
+#include "src/esp_dmx/esp_dmx.h"
 
 const unsigned char rdm_uid[RDM_UID_LENGTH] = {
   0x45,
@@ -765,7 +765,7 @@ void sendRDMDiscoverResponsePacket() {
 
   // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
   dmx_write_packet(DMX_PORT, rdm_disc_packet, 25);
-  dmx_send_packet(DMX_PORT, 25);
+  dmx_send_packet_no_break(DMX_PORT, 25);
   dmx_set_mode(DMX_PORT, DMX_MODE_READ);
 }
 
