@@ -163,7 +163,7 @@ void SendRDMResponse(unsigned char *req_data,
 void calculateRDMDiscoverChecksum();
 
 QueueHandle_t dmx_queue;
-TimerHandle_t DMXRefreshTimer;
+TimerHandle_t DMXRefreshTimer, ActivityLEDTimer;
 TaskHandle_t DMXRecvTaskHandle;
 SemaphoreHandle_t USBAPIResponseMutex, RDMQueueMutex;
 
@@ -189,7 +189,7 @@ void setup() {
   state = MSG_START;
   Serial.println("Setup - Activity Led Timer");
   pinMode(ACTIVITY_LED, OUTPUT);
-  ActivityLedTimer= xTimerCreate("activity_led", calculateRefreshTimerInterval(), pdTRUE, 0, DMXRefresh);
+  ActivityLedTimer = xTimerCreate("activity_led", ACT_LED_DMX_OUT_TICKS, pdFALSE, 0, ActivityLed);
   Serial.println("Widget Ready");
 }
 
@@ -489,6 +489,7 @@ void sendDMX(unsigned int length, unsigned char *data) {
   if (data[0] == DMX_START_CODE) {
     xTimerReset(DMXRefreshTimer, 10);
   }
+  xTimerChangePeriod(ActivityLEDTimer, ACT_LED_DMX_OUT_TICKS, 10); // This also starts the timer
 }
 
 void DMXRefresh(TimerHandle_t pxTimer) {
@@ -530,6 +531,7 @@ void DMXRecvTask(void *parameter) {
             dmx_rx_packet[0] = 0; // Set Receive Status Byte
             dmx_read_packet(DMX_PORT, &dmx_rx_packet[1], event.size);
             handleRecvDMXPacket(event.size, dmx_rx_packet); // I assume the start code is still in the packet?
+            xTimerChangePeriod(ActivityLEDTimer, ACT_LED_DMX_OUT_TICKS, 10); // This also starts the timer
           }
           break;
 
