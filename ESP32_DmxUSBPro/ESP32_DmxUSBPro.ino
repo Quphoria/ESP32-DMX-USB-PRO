@@ -521,6 +521,8 @@ void DMXRecvTask(void *parameter) {
     if (xQueueReceive(dmx_queue, &event, portMAX_DELAY)) {
       switch (event.status) {
         case DMX_OK: { // Create scope for local variables
+            printf("Received packet with start code: %02X and size: %i\n",
+              event.start_code, event.size);
             #ifdef DMX_RX_DEBUG
             printf("Received packet with start code: %02X and size: %i\n",
               event.start_code, event.size);
@@ -531,7 +533,7 @@ void DMXRecvTask(void *parameter) {
             dmx_rx_packet[0] = 0; // Set Receive Status Byte
             dmx_read_packet(DMX_PORT, &dmx_rx_packet[1], event.size);
             handleRecvDMXPacket(event.size, dmx_rx_packet); // I assume the start code is still in the packet?
-            xTimerChangePeriod(ActivityLEDTimer, ACT_LED_DMX_OUT_TICKS, 10); // This also starts the timer
+            xTimerChangePeriod(ActivityLEDTimer, ACT_LED_DMX_IN_TICKS, 10); // This also starts the timer
           }
           break;
 
