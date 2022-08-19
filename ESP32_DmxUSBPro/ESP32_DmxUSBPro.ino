@@ -521,8 +521,6 @@ void DMXRecvTask(void *parameter) {
     if (xQueueReceive(dmx_queue, &event, portMAX_DELAY)) {
       switch (event.status) {
         case DMX_OK: { // Create scope for local variables
-            printf("Received packet with start code: %02X and size: %i\n",
-              event.start_code, event.size);
             #ifdef DMX_RX_DEBUG
             printf("Received packet with start code: %02X and size: %i\n",
               event.start_code, event.size);
