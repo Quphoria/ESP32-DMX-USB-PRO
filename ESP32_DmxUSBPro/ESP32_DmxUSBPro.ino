@@ -55,7 +55,9 @@
 /*
 - Send RDM Discovery
 - Handle RDM Messages
-- 
+- DMX Activity LED
+- Mode switch
+- RDM Sniff?
 */
 
 #include <EEPROM.h>
