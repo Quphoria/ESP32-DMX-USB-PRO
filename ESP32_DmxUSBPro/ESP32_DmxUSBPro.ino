@@ -596,12 +596,14 @@ void handleRecvDMXPacket(unsigned int dmx_data_length, unsigned char* data) {
       break;
     #ifdef DMX_ENABLE_RDM
     case RDM_START_CODE:
-      if (data[1] != RDM_SUB_START_CODE) goto rdm_send_to_pc; // Incorrect Sub START Code
-      if (data[2] + 2 != dmx_data_length) goto rdm_send_to_pc; // Incorrect Length
-      if (!RDMChecksumValid(data)) goto rdm_send_to_pc; // Incorrect Checksum
-      if (!RDMDestMatch(&data[3])) break; // Ignore messages not meant for us
-      if (!HandleRDM(data)) break; // If HandleRDM returns 1, we forward to PC
-rdm_send_to_pc:
+      if (data[1] == RDM_SUB_START_CODE) { // Check Sub START Code
+        if (data[2] + 2 == dmx_data_length) { // Check Length
+          if (RDMChecksumValid(data)) { // Check Checksum
+            if (!RDMDestMatch(&data[3])) break; // Ignore messages not meant for us
+            if (!HandleRDM(data)) break; // If HandleRDM returns 1, we forward to PC
+          }
+        }
+      }
       sendResponse(DMX_PRO_RECV_PACKET, dmx_data_length+1, data);
       break;
     #endif
