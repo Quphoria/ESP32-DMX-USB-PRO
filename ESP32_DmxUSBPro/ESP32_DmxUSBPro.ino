@@ -70,8 +70,8 @@
 #define ACTIVITY_LED 2
 
 // Pin Definitions
-#define DMX_USB_RXD 9
-#define DMX_USB_TXD 10
+#define DMX_USB_RXD 14
+#define DMX_USB_TXD 12
 #define DMX_TX  17
 #define DMX_RX  16
 #define DMX_RTS 21
