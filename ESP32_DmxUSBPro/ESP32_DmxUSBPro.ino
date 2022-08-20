@@ -133,11 +133,12 @@ unsigned char data_buffer[600];
 
 // DMX buffers
 unsigned char dmx_buffer_select = 0;
+unsigned int dmx_buffer_length[2] = {0, 0};
 unsigned char dmx_buffer_a[DMX_MAX_PACKET_SIZE] = {0};
 unsigned char dmx_buffer_b[DMX_MAX_PACKET_SIZE] = {0};
 unsigned char dmx_rx[DMX_MAX_PACKET_SIZE] = {0}; // Used to can generate dmx change messages
 unsigned char rdm_queue_message = 0;
-unsigned int rdm_queued_message_ready = 0;
+unsigned int rdm_queued_message_length = 0;
 unsigned char rdm_queued_message[DMX_MAX_PACKET_SIZE] = {0};
 
 // Function forward declarations
@@ -473,11 +474,7 @@ void sendDMX(unsigned int length, unsigned char *data) {
     if (rdm_queue_message) {
       rdm_queue_message = 0;
       memcpy(rdm_queued_message, data, length);
-      // Zero rest of packet
-      if (length < DMX_MAX_PACKET_SIZE) {
-        memset(&rdm_queued_message[length], 0, DMX_MAX_PACKET_SIZE - length);
-      }
-      rdm_queued_message_ready = 1;
+      rdm_queued_message_length = length;
       return;
     }
     #endif
@@ -486,21 +483,19 @@ void sendDMX(unsigned int length, unsigned char *data) {
   unsigned char dmx_packet[DMX_MAX_PACKET_SIZE];
   // Copy data into fixed length buffer
   memcpy(dmx_packet, data, length);
-  if (length < DMX_MAX_PACKET_SIZE) {
-    memset(&dmx_packet[length], 0, DMX_MAX_PACKET_SIZE - length);
-  }
 
   if (data[0] == DMX_START_CODE) {
     // Copy dmx packet into buffer then switch the buffers
     memcpy(dmx_buffer_select ? dmx_buffer_a : dmx_buffer_b, data, length);
+    dmx_buffer_length[~dmx_buffer_select] = length;
     dmx_buffer_select ^= 1;
   }
 
   // block until we are ready to send another packet
   dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
     
-  dmx_write_packet(DMX_PORT, dmx_packet, DMX_MAX_PACKET_SIZE);
-  dmx_send_packet(DMX_PORT, DMX_MAX_PACKET_SIZE);
+  dmx_write_packet(DMX_PORT, dmx_packet, length);
+  dmx_send_packet(DMX_PORT, length);
 
   if (data[0] == DMX_START_CODE) {
     xTimerReset(DMXRefreshTimer, 10);
@@ -518,8 +513,10 @@ void DMXRefresh(TimerHandle_t pxTimer) {
     dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
 
     // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
-    dmx_write_packet(DMX_PORT, dmx_buffer_select ? dmx_buffer_b : dmx_buffer_a, DMX_MAX_PACKET_SIZE);
-    dmx_send_packet(DMX_PORT, DMX_MAX_PACKET_SIZE);
+    unsigned char dmx_buf_sel = dmx_buffer_select;
+    unsigned int dmx_packet_length = dmx_buffer_length[dmx_buf_sel];
+    dmx_write_packet(DMX_PORT, dmx_buf_sel ? dmx_buffer_b : dmx_buffer_a, dmx_packet_length);
+    dmx_send_packet(DMX_PORT, dmx_packet_length);
   }
 }
 
@@ -726,7 +723,7 @@ unsigned char handleRDMMessage(unsigned char *rdm_data) {
       break;
     case RDM_CC_GET_COMMAND:
       if (pid == RDM_PID_QUEUED_MESSAGE) {
-        if (rdm_queued_message_ready) {
+        if (rdm_queued_message_length) {
           // Send packet
           sendRDMQueuedMessage();
           return 0;
@@ -761,7 +758,7 @@ void SendRDMResponse(unsigned char *req_data,
   memcpy(&rdm_packet[9], rdm_uid, RDM_UID_LENGTH);
   rdm_packet[15] = req_data[15]; // Transaction Number
   rdm_packet[16] = resp_type;
-  rdm_packet[17] = rdm_queued_message_ready;
+  rdm_packet[17] = rdm_queued_message_length != 0;
   rdm_packet[18] = req_data[18]; // Sub Device Upper
   rdm_packet[19] = req_data[19]; // Sub Device Lower
   rdm_packet[20] = req_data[20]; // CC
@@ -821,11 +818,11 @@ void sendRDMQueuedMessage() {
   dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
 
   // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
-  dmx_write_packet(DMX_PORT, rdm_queued_message, DMX_MAX_PACKET_SIZE);
-  dmx_send_packet(DMX_PORT, DMX_MAX_PACKET_SIZE);
+  dmx_write_packet(DMX_PORT, rdm_queued_message, rdm_queued_message_length);
+  dmx_send_packet(DMX_PORT, rdm_queued_message_length);
 
   dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
   dmx_set_mode(DMX_PORT, DMX_MODE_READ);
-  rdm_queued_message_ready = 0;
+  rdm_queued_message_length = 0;
   xSemaphoreGive(RDMQueueMutex); // Allow next message to get queued
 }
