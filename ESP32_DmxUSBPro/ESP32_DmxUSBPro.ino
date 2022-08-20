@@ -57,7 +57,7 @@
 // Configuration
 #define DMX_PORT DMX_NUM_2
 #define FIRMWARE_VERSION 144
-#define SERIAL_NUMBER 0x1337c0d3 // Not sure why the leading 0, should be 4 bytes, maybe documentation meant 0x
+#define SERIAL_NUMBER 0x1337c0de // Not sure why the leading 0, should be 4 bytes, maybe documentation meant 0x
 #define DMX_BAUD_RATE 250000 // typical baud rate - 250000
 #define DMX_USB_BAUD_RATE 57600 // technically DMX USB Pro has no baud rate, but have seen others using this
 // #define DMX_RX_DEBUG
