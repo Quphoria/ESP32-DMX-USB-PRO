@@ -59,7 +59,7 @@
 #define FIRMWARE_VERSION 144
 #define SERIAL_NUMBER 0x1337c0de // Not sure why the leading 0, should be 4 bytes, maybe documentation meant 0x
 #define DMX_BAUD_RATE 250000 // typical baud rate - 250000
-#define DMX_USB_BAUD_RATE 57600 // technically DMX USB Pro has no baud rate, but have seen others using this
+#define DMX_USB_BAUD_RATE 115200 // technically DMX USB Pro has no baud rate, but have seen others using this
 // #define DMX_RX_DEBUG
 #define DMX_RDM_DEBUG
 // #define DMX_RDM_DEBUG_CC // Only use for testing, this may break dmx+rdm timing
@@ -116,6 +116,8 @@ unsigned char rdm_disc_packet[RDM_DISC_UNIQUE_BRANCH_SLOTS] = { RDM_START_CODE,
 unsigned char widget_mode = FIRMWARE_RDM;
 unsigned char recv_dmx_on_change = 0;
 unsigned char rdm_discovery_muted = 0;
+unsigned char activity_led_flashing = 0;
+unsigned char activity_led_disabled = 0;
 
 // Store in memory for now, move to eeprom later
 // (it should all be persistent according to api reference)
@@ -155,7 +157,8 @@ unsigned int calculateRefreshTimerInterval();
 void setupDMX();
 void sendDMX(unsigned int length, unsigned char *data);
 void DMXRefresh(TimerHandle_t pxTimer);
-void ActivityLed(TimerHandle_t pxTimer);
+void ActivityLED(TimerHandle_t pxTimer);
+void FlashActivityLED(TickType_t half_period);
 void DMXRecvTask(void *parameter);
 void handleRecvDMXPacket(unsigned int length, unsigned char* data);
 void handleRDMPacket(unsigned int dmx_data_length, unsigned char *data);
@@ -197,7 +200,7 @@ void setup() {
   state = MSG_START;
   Serial.println("Setup - Activity Led Timer");
   pinMode(ACTIVITY_LED, OUTPUT);
-  ActivityLEDTimer = xTimerCreate("activity_led", ACT_LED_DMX_OUT_TICKS, pdFALSE, 0, ActivityLed);
+  ActivityLEDTimer = xTimerCreate("activity_led", ACT_LED_DMX_OUT_TICKS, pdFALSE, 0, ActivityLED);
   Serial.println("Widget Ready");
 }
 
@@ -237,7 +240,12 @@ void saveEEPROMData() {
     changed |= EEPROMupdate(4+i, user_config[i]);
   }
   if (changed) {
+    // Disable Activity LED while saving EEPROM (causes timer crash)
+    activity_led_disabled = 1;
+    xTimerStop(ActivityLEDTimer, 100);
     EEPROM.commit();
+    activity_led_flashing = 0;
+    activity_led_disabled = 0;
   }
   Serial.println("EEPROM Written");
 }
@@ -381,6 +389,7 @@ void processMessage() {
       dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       recv_dmx_on_change = data_buffer[0] != 0; // Only 1 or 0
+      printf("DMX_PRO_RECV_DMX_ON_CHANGE: %i\n", data_buffer[0] != 0);
       break;
     case DMX_PRO_GET_SERIAL_NUMBER:
       dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
@@ -529,8 +538,7 @@ void sendDMX(unsigned int length, unsigned char *data) {
     xTimerReset(DMXRefreshTimer, 10);
   }
   
-  digitalWrite(ACTIVITY_LED, 1);
-  xTimerChangePeriod(ActivityLEDTimer, ACT_LED_DMX_OUT_TICKS, 10); // This also starts the timer
+  FlashActivityLED(ACT_LED_DMX_OUT_TICKS);
 }
 
 void DMXRefresh(TimerHandle_t pxTimer) {
@@ -548,8 +556,18 @@ void DMXRefresh(TimerHandle_t pxTimer) {
   }
 }
 
-void ActivityLed(TimerHandle_t pxTimer) {
+void ActivityLED(TimerHandle_t pxTimer) {
   digitalWrite(ACTIVITY_LED, 0);
+  vTaskDelay(xTimerGetPeriod(ActivityLEDTimer));
+  activity_led_flashing = 0;
+}
+
+void FlashActivityLED(TickType_t half_period) {
+  if (activity_led_flashing == 0 && activity_led_disabled == 0) {
+    activity_led_flashing = 1;
+    digitalWrite(ACTIVITY_LED, 1);
+    xTimerChangePeriod(ActivityLEDTimer, half_period, 10); // This also starts the timer
+  }
 }
 
 void DMXRecvTask(void *parameter) {
@@ -569,8 +587,7 @@ void DMXRecvTask(void *parameter) {
             dmx_rx_packet[0] = 0; // Set Receive Status Byte
             dmx_read_packet(DMX_PORT, &dmx_rx_packet[1], event.size);
             handleRecvDMXPacket(event.size, dmx_rx_packet); // I assume the start code is still in the packet?
-            digitalWrite(ACTIVITY_LED, 1);
-            xTimerChangePeriod(ActivityLEDTimer, ACT_LED_DMX_IN_TICKS, 10); // This also starts the timer
+            FlashActivityLED(ACT_LED_DMX_IN_TICKS);
           }
           break;
 
