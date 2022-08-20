@@ -64,14 +64,15 @@
 #define DMX_RDM_DEBUG
 // #define DMX_RDM_DEBUG_CC // Only use for testing, this may break dmx+rdm timing
 // #define DMX_RDM_DEBUG_VERBOSE // Only use for testing, this may break dmx+rdm timing
+// #define DMX_USB_PRO_DEBUG // Only use for testing, this may break dmx+rdm timing
 #define DMX_ENABLE_RDM
 #define ACT_LED_DMX_IN_TICKS  125 / portTICK_PERIOD_MS / 2 // 8Hz (half period)
 #define ACT_LED_DMX_OUT_TICKS 500 / portTICK_PERIOD_MS / 2 // 2Hz (half period)
 #define ACTIVITY_LED 2
 
 // Pin Definitions
-#define DMX_USB_RXD 14
-#define DMX_USB_TXD 12
+#define DMX_USB_RXD 25
+#define DMX_USB_TXD 26
 #define DMX_TX  17
 #define DMX_RX  16
 #define DMX_RTS 21
@@ -112,7 +113,7 @@ unsigned char rdm_disc_packet[RDM_DISC_UNIQUE_BRANCH_SLOTS] = { RDM_START_CODE,
 };
 
 // Device state
-unsigned char widget_mode = FIRMWARE_DMX;
+unsigned char widget_mode = FIRMWARE_RDM;
 unsigned char recv_dmx_on_change = 0;
 unsigned char rdm_discovery_muted = 0;
 
@@ -247,6 +248,9 @@ void checkSerial() {
 
   while(!Serial1.available());
   c = Serial1.read();
+  #ifdef DMX_USB_PRO_DEBUG
+  printf("%02X ", c);
+  #endif
 
   switch (state)
   {
@@ -296,6 +300,9 @@ void processMessage() {
     case DMX_PRO_REPROGRAM_REQ:
       dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
+      #ifdef DMX_USB_PRO_DEBUG
+      printf("DMX_PRO_REPROGRAM_REQ\n");
+      #endif
       break;
     case DMX_PRO_PROGRAM_FLASH:
       dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
@@ -306,6 +313,9 @@ void processMessage() {
       resp_buffer[2] = 'U';
       resp_buffer[3] = 'E';
       sendResponse(DMX_PRO_PROGRAM_FLASH, 4, resp_buffer);
+      #ifdef DMX_USB_PRO_DEBUG
+      printf("DMX_PRO_PROGRAM_FLASH\n");
+      #endif
       break;
     case DMX_PRO_GET_WIDGET_PARAMS:
       user_config_size = (data_buffer[1] << 8) | data_buffer[0];
@@ -319,6 +329,9 @@ void processMessage() {
         memcpy(&resp_buffer[5], user_config, user_config_size);
       }
       sendResponse(DMX_PRO_GET_WIDGET_PARAMS, 5+user_config_size, resp_buffer);
+      #ifdef DMX_USB_PRO_DEBUG
+      printf("DMX_PRO_GET_WIDGET_PARAMS\n");
+      #endif
       break;
     case DMX_PRO_SET_WIDGET_PARAMS: { // Put in scope for local variable
         dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
@@ -342,6 +355,9 @@ void processMessage() {
           xTimerChangePeriod(DMXRefreshTimer, calculateRefreshTimerInterval(), 100);
           saveEEPROMData();
         }
+        #ifdef DMX_USB_PRO_DEBUG
+        printf("DMX_PRO_SET_WIDGET_PARAMS\n");
+        #endif
       }
       break;
     case DMX_PRO_SEND_PACKET:
@@ -374,6 +390,10 @@ void processMessage() {
       resp_buffer[2] = (SERIAL_NUMBER >> 16) & 0xff;
       resp_buffer[3] = (SERIAL_NUMBER >> 24) & 0xff;
       sendResponse(DMX_PRO_GET_SERIAL_NUMBER, 4, resp_buffer);
+      
+      #ifdef DMX_USB_PRO_DEBUG
+      printf("DMX_PRO_GET_SERIAL_NUMBER\n");
+      #endif
       break;
     case DMX_PRO_SEND_RDM_DISCOVERY:
       // Send 38 byte RDM discover packet in data_buffer
@@ -399,7 +419,15 @@ void sendResponse(unsigned char label, unsigned int length, unsigned char *data)
   Serial1.write((length >> 8) & 0xff);
   Serial1.write(data, length);
   Serial1.write(DMX_PRO_END_MSG);
+  #ifdef DMX_USB_PRO_DEBUG
+  printf("\nR: %02X %i %02X %02X, ", DMX_PRO_START_MSG, label, length & 0xff, (length >> 8) & 0xff);
+  for (int i = 0; i < length; i++) {
+    printf("%02X ", data[i]);
+  }
+  printf("%02X\n", DMX_PRO_END_MSG);
+  #endif
   xSemaphoreGive(USBAPIResponseMutex); 
+  
 }
 
 void sendDMXRecvChanged(unsigned int dmx_data_length, unsigned char *data) {
