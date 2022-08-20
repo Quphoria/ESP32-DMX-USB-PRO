@@ -344,6 +344,19 @@ esp_err_t dmx_write_slot(dmx_port_t dmx_num, uint16_t slot_idx,
 esp_err_t dmx_send_packet(dmx_port_t dmx_num, uint16_t num_slots);
 
 /**
+ * @brief Transmits a packet of DMX with a Break or Mark After Break. This sends the number of slots as was
+ * declared in dmx_driver_install().
+ *
+ * @param dmx_num The DMX port number.
+ * @param num_slots The number of slots to transmit.
+ * @retval ESP_OK on success.
+ * @retval ESP_ERR_INVALID_ARG if there was an argument error.
+ * @retval ESP_ERR_INVALID_STATE if the driver was not installed.
+ * @retval ESP_FAIL if a packet is already being sent.
+ */
+esp_err_t dmx_send_packet_with_break(dmx_port_t dmx_num, uint16_t num_slots);
+
+/**
  * @brief Transmits a packet of DMX without a Break or Mark After Break. This sends the number of slots as was
  * declared in dmx_driver_install().
  *

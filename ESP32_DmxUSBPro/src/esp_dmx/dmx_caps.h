@@ -189,6 +189,9 @@ extern "C" {
  */
 #define DMX_SIP_ASC      (0xcf)
 
+// RDM Discovery Constants
+#define RDM_SUB_START 0x01
+
 #ifdef __cplusplus
 }
 #endif

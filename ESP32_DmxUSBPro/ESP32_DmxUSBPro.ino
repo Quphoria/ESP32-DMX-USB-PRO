@@ -21,7 +21,7 @@
 #define RDM_PID_DISC_MUTE           0x0002
 #define RDM_PID_DISC_UNMUTE         0x0003
 #define RDM_PID_QUEUED_MESSAGE      0x0020
-#define RDM_DISC_UNIQUE_BRANCH_SLOTS 24
+#define RDM_DISC_UNIQUE_BRANCH_SLOTS 25
 
 // Enttec DMX USB PRO API Constants
 #define DMX_PRO_START_MSG 0x7E
@@ -57,14 +57,16 @@
 // Configuration
 #define DMX_PORT DMX_NUM_2
 #define FIRMWARE_VERSION 144
-#define SERIAL_NUMBER 0x0ffffffff // Not sure why the leading 0, should be 4 bytes, maybe documentation meant 0x
+#define SERIAL_NUMBER 0x1337c0d3 // Not sure why the leading 0, should be 4 bytes, maybe documentation meant 0x
 #define DMX_BAUD_RATE 250000 // typical baud rate - 250000
 #define DMX_USB_BAUD_RATE 57600 // technically DMX USB Pro has no baud rate, but have seen others using this
 // #define DMX_RX_DEBUG
 #define DMX_RDM_DEBUG
+// #define DMX_RDM_DEBUG_CC // Only use for testing, this may break dmx+rdm timing
+// #define DMX_RDM_DEBUG_VERBOSE // Only use for testing, this may break dmx+rdm timing
 #define DMX_ENABLE_RDM
-#define ACT_LED_DMX_IN_TICKS  125 / portTICK_PERIOD_MS // 8Hz
-#define ACT_LED_DMX_OUT_TICKS 500 / portTICK_PERIOD_MS // 2Hz
+#define ACT_LED_DMX_IN_TICKS  125 / portTICK_PERIOD_MS / 2 // 8Hz (half period)
+#define ACT_LED_DMX_OUT_TICKS 500 / portTICK_PERIOD_MS / 2 // 2Hz (half period)
 #define ACTIVITY_LED 2
 
 // Pin Definitions
@@ -98,14 +100,14 @@ const unsigned char rdm_broadcast_manufacturer_uid[RDM_UID_LENGTH] =
   {0x45, 0x4E, 0xff, 0xff, 0xff, 0xff};
 const unsigned char rdm_ack_timer_estimate[2] = {0x00, 0x01}; // 100ms
 const unsigned char rdm_disc_mute_control_field[2] = {0x00, 0b00000010}; // Support sub devices
-unsigned char rdm_disc_packet[25] = { RDM_START_CODE,
+unsigned char rdm_disc_packet[RDM_DISC_UNIQUE_BRANCH_SLOTS] = { RDM_START_CODE,
   0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xAA,
-  rdm_uid[0] & 0xAA, rdm_uid[0] & 0x55,
-  rdm_uid[1] & 0xAA, rdm_uid[1] & 0x55,
-  rdm_uid[2] & 0xAA, rdm_uid[2] & 0x55,
-  rdm_uid[3] & 0xAA, rdm_uid[3] & 0x55,
-  rdm_uid[4] & 0xAA, rdm_uid[4] & 0x55,
-  rdm_uid[5] & 0xAA, rdm_uid[5] & 0x55,
+  rdm_uid[0] | 0xAA, rdm_uid[0] | 0x55,
+  rdm_uid[1] | 0xAA, rdm_uid[1] | 0x55,
+  rdm_uid[2] | 0xAA, rdm_uid[2] | 0x55,
+  rdm_uid[3] | 0xAA, rdm_uid[3] | 0x55,
+  rdm_uid[4] | 0xAA, rdm_uid[4] | 0x55,
+  rdm_uid[5] | 0xAA, rdm_uid[5] | 0x55,
   0x00, 0x00, 0x00, 0x00 // Checksum to be calculated later
 };
 
@@ -154,10 +156,11 @@ void DMXRefresh(TimerHandle_t pxTimer);
 void ActivityLed(TimerHandle_t pxTimer);
 void DMXRecvTask(void *parameter);
 void handleRecvDMXPacket(unsigned int length, unsigned char* data);
+void handleRDMPacket(unsigned int dmx_data_length, unsigned char *data);
 unsigned char RDMDestMatch(unsigned char *dest_uid);
 unsigned char RDMDestMatchUID(unsigned char *dest_uid);
 unsigned char RDMChecksumValid(unsigned char *rdm_data);
-unsigned char HandleRDM(unsigned char *rdm_data);
+unsigned char handleRDMMessage(unsigned char *rdm_data);
 void SendRDMResponse(unsigned char *req_data,
     unsigned char resp_type, unsigned char resp_length, unsigned char *resp_data);
 void calculateRDMDiscoverChecksum();
@@ -185,7 +188,8 @@ void setup() {
   Serial.println("Setup - DMX");
   setupDMX();
   Serial.println("Setup - Recv Task");
-  xTaskCreate(DMXRecvTask, "dmx_recv", 10000, NULL, 2, &DMXRecvTaskHandle);
+  // High Priority - 20
+  xTaskCreatePinnedToCore(DMXRecvTask, "dmx_recv", 10000, NULL, 20, &DMXRecvTaskHandle, 0);
   Serial.println("Setup - Refresh Timer");
   DMXRefreshTimer = xTimerCreate("dmx_refresh", calculateRefreshTimerInterval(), pdTRUE, 0, DMXRefresh);
   state = MSG_START;
@@ -289,9 +293,11 @@ void processMessage() {
   switch (message_type)
   {
     case DMX_PRO_REPROGRAM_REQ:
+      dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       break;
     case DMX_PRO_PROGRAM_FLASH:
+      dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       // Just say the firmware was programmed
       resp_buffer[0] = 'T';
@@ -314,6 +320,7 @@ void processMessage() {
       sendResponse(DMX_PRO_GET_WIDGET_PARAMS, 5+user_config_size, resp_buffer);
       break;
     case DMX_PRO_SET_WIDGET_PARAMS: { // Put in scope for local variable
+        dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
         dmx_set_mode(DMX_PORT, DMX_MODE_READ);
         unsigned char param_changed = 0;
         user_config_size = (data_buffer[1] << 8) | data_buffer[0];
@@ -350,13 +357,16 @@ void processMessage() {
         sendDMX(dataSize, data_buffer);
       }
       #endif
+      dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       break;
     case DMX_PRO_RECV_DMX_ON_CHANGE:
+      dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       recv_dmx_on_change = data_buffer[0] != 0; // Only 1 or 0
       break;
     case DMX_PRO_GET_SERIAL_NUMBER:
+      dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       resp_buffer[0] = SERIAL_NUMBER & 0xff;
       resp_buffer[1] = (SERIAL_NUMBER >> 8) & 0xff;
@@ -368,7 +378,11 @@ void processMessage() {
       // Send 38 byte RDM discover packet in data_buffer
       #ifdef DMX_ENABLE_RDM
       dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
+
+      // Send and recv here
+
       #endif
+      dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
       dmx_set_mode(DMX_PORT, DMX_MODE_READ);
       break;
     default:
@@ -491,6 +505,8 @@ void sendDMX(unsigned int length, unsigned char *data) {
   if (data[0] == DMX_START_CODE) {
     xTimerReset(DMXRefreshTimer, 10);
   }
+  
+  digitalWrite(ACTIVITY_LED, 1);
   xTimerChangePeriod(ActivityLEDTimer, ACT_LED_DMX_OUT_TICKS, 10); // This also starts the timer
 }
 
@@ -508,11 +524,6 @@ void DMXRefresh(TimerHandle_t pxTimer) {
 }
 
 void ActivityLed(TimerHandle_t pxTimer) {
-  TickType_t led_period = xTimerGetPeriod(pxTimer);
-  // Turn LED On
-  digitalWrite(ACTIVITY_LED, 1);
-  vTaskDelay(led_period / 2); // Delay for 1/2 period
-  // Turn LED Off
   digitalWrite(ACTIVITY_LED, 0);
 }
 
@@ -533,6 +544,7 @@ void DMXRecvTask(void *parameter) {
             dmx_rx_packet[0] = 0; // Set Receive Status Byte
             dmx_read_packet(DMX_PORT, &dmx_rx_packet[1], event.size);
             handleRecvDMXPacket(event.size, dmx_rx_packet); // I assume the start code is still in the packet?
+            digitalWrite(ACTIVITY_LED, 1);
             xTimerChangePeriod(ActivityLEDTimer, ACT_LED_DMX_IN_TICKS, 10); // This also starts the timer
           }
           break;
@@ -598,21 +610,40 @@ void handleRecvDMXPacket(unsigned int dmx_data_length, unsigned char* data) {
       break;
     #ifdef DMX_ENABLE_RDM
     case RDM_START_CODE:
-      if (data[1] == RDM_SUB_START_CODE) { // Check Sub START Code
-        if (data[2] + 2 == dmx_data_length) { // Check Length
-          if (RDMChecksumValid(data)) { // Check Checksum
-            if (!RDMDestMatch(&data[3])) break; // Ignore messages not meant for us
-            if (!HandleRDM(data)) break; // If HandleRDM returns 1, we forward to PC
-          }
-        }
-      }
-      sendResponse(DMX_PRO_RECV_PACKET, dmx_data_length+1, data);
+      handleRDMPacket(dmx_data_length, &data[1]);
       break;
     #endif
   }
 }
 
 // RDM Functions
+void handleRDMPacket(unsigned int dmx_data_length, unsigned char *data) {
+  #ifdef DMX_RDM_DEBUG_VERBOSE
+  printf("RDM Packet\n");
+  #endif
+  if (data[1] == RDM_SUB_START_CODE) { // Check Sub START Code
+    #ifdef DMX_RDM_DEBUG_VERBOSE
+    printf("RDM Valid Sub Start\n");
+    #endif
+    if (data[2] + 2 == dmx_data_length) { // Check Length
+      #ifdef DMX_RDM_DEBUG_VERBOSE
+      printf("RDM Valid Length\n");
+      #endif
+      if (RDMChecksumValid(data)) { // Check Checksum
+        #ifdef DMX_RDM_DEBUG_VERBOSE
+        printf("RDM Valid Checksum\n");
+        #endif
+        if (!RDMDestMatch(&data[3])) return; // Ignore messages not meant for us
+        #ifdef DMX_RDM_DEBUG_VERBOSE
+        printf("RDM Destination Match\n");
+        #endif
+        if (!handleRDMMessage(data)) return; // If HandleRDM returns 1, we forward to PC
+      }
+    }
+  }
+  sendResponse(DMX_PRO_RECV_PACKET, dmx_data_length+1, data);
+}
+
 unsigned char RDMDestMatch(unsigned char *dest_uid) {
   if (memcmp(dest_uid, rdm_uid, RDM_UID_LENGTH) == 0) return 1;
   if (memcmp(dest_uid, rdm_broadcast_all_uid, RDM_UID_LENGTH) == 0) return 1;
@@ -631,14 +662,20 @@ unsigned char RDMChecksumValid(unsigned char *rdm_data) {
   for (unsigned int i = 2; i < length; i++) {
     calc_checksum += (uint16_t)(rdm_data[i]);
   }
-  return ((calc_checksum >> 8) & 0xff == rdm_data[length]) &&
-    (calc_checksum & 0xff == rdm_data[length+1]);
+  #ifdef DMX_RDM_DEBUG_VERBOSE
+  printf("RDM Checksum Calc: %04X Exp: %02X%02X\n", calc_checksum, rdm_data[length], rdm_data[length+1]);
+  #endif
+  return (((calc_checksum >> 8) & 0xff) == rdm_data[length]) &&
+    ((calc_checksum & 0xff) == rdm_data[length+1]);
 }
 
-unsigned char HandleRDM(unsigned char *rdm_data) {
+unsigned char handleRDMMessage(unsigned char *rdm_data) {
   // Return 1 if we want to forward message to PC
   unsigned char command_class = rdm_data[20];
   uint16_t pid = (((uint16_t)rdm_data[21]) << 8) | ((uint16_t)rdm_data[22]);
+  #ifdef DMX_RDM_DEBUG_CC
+  printf("RDM Message CC: %02X, PID: %04X\n", command_class, pid);
+  #endif
   switch (command_class) {
     case RDM_CC_DISCOVER:
       {
@@ -647,6 +684,16 @@ unsigned char HandleRDM(unsigned char *rdm_data) {
             if (rdm_discovery_muted) return 0; // We are muted
             // This has been moved to DMX Driver since its not a normal request packet
             if (rdm_data[23] != 2*RDM_UID_LENGTH) return 0; // Must be 2 UIDS long
+            #ifdef DMX_RDM_DEBUG
+            printf("RDM Scan: ");
+            for (u_int8_t i = 0; i < 2*RDM_UID_LENGTH; i++) {
+              if (i == RDM_UID_LENGTH) {
+                printf("- ");
+              }
+              printf("%02X ", rdm_data[24+i]);
+            }
+            printf("\n");
+            #endif
             // Check higher or equal to lower bound
             if (memcmp(&rdm_data[24], rdm_uid, RDM_UID_LENGTH) > 0) return 0;
             // Check lower or equal to higher bound
@@ -712,7 +759,7 @@ void SendRDMResponse(unsigned char *req_data,
   rdm_packet[2] = length;
   memcpy(&rdm_packet[3], &req_data[9], RDM_UID_LENGTH);
   memcpy(&rdm_packet[9], rdm_uid, RDM_UID_LENGTH);
-  rdm_packet[15] = req_data[15];
+  rdm_packet[15] = req_data[15]; // Transaction Number
   rdm_packet[16] = resp_type;
   rdm_packet[17] = rdm_queued_message_ready;
   rdm_packet[18] = req_data[18]; // Sub Device Upper
@@ -730,31 +777,29 @@ void SendRDMResponse(unsigned char *req_data,
   }
   rdm_packet[length] = (checksum >> 8) & 0xff;
   rdm_packet[length+1] = checksum & 0xff;
-  if (length+2 < DMX_MAX_PACKET_SIZE) {
-    memset(&rdm_packet[length+2], 0, DMX_MAX_PACKET_SIZE-(length+2));
-  }
 
   dmx_set_mode(DMX_PORT, DMX_MODE_WRITE);
 
   // block until we are ready to send another packet
   dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
 
-  // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
-  dmx_write_packet(DMX_PORT, rdm_packet, DMX_MAX_PACKET_SIZE);
-  dmx_send_packet(DMX_PORT, DMX_MAX_PACKET_SIZE);
+  // length+2 (rdm data + checksum)
+  dmx_write_packet(DMX_PORT, rdm_packet, length+2);
+  dmx_send_packet_with_break(DMX_PORT, length+2);
 
+  dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
   dmx_set_mode(DMX_PORT, DMX_MODE_READ);
 }
 
 void calculateRDMDiscoverChecksum() {
   uint16_t checksum = 0;
-  for (unsigned int i = 0; i < 12; i++) {
-    checksum += (uint16_t)rdm_disc_packet[8+i];
+  for (unsigned int i = 0; i < 2*RDM_UID_LENGTH; i++) {
+    checksum += (uint16_t)rdm_disc_packet[9+i];
   }
-  rdm_disc_packet[21] = (checksum >> 8) & 0xAA;
-  rdm_disc_packet[22] = (checksum >> 8) & 0x55;
-  rdm_disc_packet[23] = checksum & 0xAA;
-  rdm_disc_packet[24] = checksum & 0x55;
+  rdm_disc_packet[21] = ((checksum >> 8) & 0xff) | 0xAA;
+  rdm_disc_packet[22] = ((checksum >> 8) & 0xff) | 0x55;
+  rdm_disc_packet[23] = (checksum & 0xff) | 0xAA;
+  rdm_disc_packet[24] = (checksum & 0xff) | 0x55;
 }
 
 void sendRDMDiscoverResponsePacket() {
@@ -763,8 +808,10 @@ void sendRDMDiscoverResponsePacket() {
   dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
 
   // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
-  dmx_write_packet(DMX_PORT, rdm_disc_packet, 25);
-  dmx_send_packet_no_break(DMX_PORT, 25);
+  dmx_write_packet(DMX_PORT, &rdm_disc_packet[0], RDM_DISC_UNIQUE_BRANCH_SLOTS);
+  dmx_send_packet_no_break(DMX_PORT, RDM_DISC_UNIQUE_BRANCH_SLOTS);
+
+  dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
   dmx_set_mode(DMX_PORT, DMX_MODE_READ);
 }
 
@@ -776,6 +823,8 @@ void sendRDMQueuedMessage() {
   // Read from opposite buffer to the one we write to (prevents reading a partially updated buffer)
   dmx_write_packet(DMX_PORT, rdm_queued_message, DMX_MAX_PACKET_SIZE);
   dmx_send_packet(DMX_PORT, DMX_MAX_PACKET_SIZE);
+
+  dmx_wait_send_done(DMX_PORT, DMX_PACKET_TIMEOUT_TICK);
   dmx_set_mode(DMX_PORT, DMX_MODE_READ);
   rdm_queued_message_ready = 0;
   xSemaphoreGive(RDMQueueMutex); // Allow next message to get queued

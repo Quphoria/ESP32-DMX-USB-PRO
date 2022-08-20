@@ -138,7 +138,13 @@ static void IRAM_ATTR dmx_intr_handler(void *arg) {
         DMX_EXIT_CRITICAL_ISR(&(dmx_context[dmx_num].spinlock));
       }
 
-      if (uart_intr_status & (DMX_INTR_RX_BRK | DMX_INTR_RX_ERR)) {
+      unsigned char rdm_packet = (uart_intr_status & DMX_INTR_RX_BRK) || // Don't waste time when it had a break
+        (p_dmx->slot_idx >= 26 && // Correct packet length first
+        p_dmx->buffer[p_dmx->buf_idx][0] == RDM_SC && // Correct Start Code
+        p_dmx->buffer[p_dmx->buf_idx][1] == RDM_SUB_START && // Correct Sub Start Code
+        p_dmx->buffer[p_dmx->buf_idx][2] == p_dmx->slot_idx-2); // Correct Message Length
+
+      if (rdm_packet || (uart_intr_status & (DMX_INTR_RX_BRK | DMX_INTR_RX_ERR))) {
         // handle end-of-frame conditions
         if (p_dmx->queue && !rx_frame_err) {
           // report end-of-frame to event queue
@@ -181,11 +187,13 @@ static void IRAM_ATTR dmx_intr_handler(void *arg) {
         }
 
         // do setup for next frame
-        if (uart_intr_status & DMX_INTR_RX_BRK) {
-          p_dmx->rx_is_in_brk = true; // notify analyzer
+        if (rdm_packet || (uart_intr_status & DMX_INTR_RX_BRK)) {
           // switch buffers, set break timestamp, and reset slot counter
           p_dmx->buf_idx = !p_dmx->buf_idx;
-          p_dmx->rx_last_brk_ts = now;
+          if (uart_intr_status & DMX_INTR_RX_BRK) {
+            p_dmx->rx_is_in_brk = true; // notify analyzer
+            p_dmx->rx_last_brk_ts = now;
+          }
           p_dmx->slot_idx = 0;
         } else {
           // set frame error, don't switch buffers until break rx'd
