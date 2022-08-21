@@ -452,7 +452,8 @@ void sendDMXRecvChanged(unsigned int dmx_data_length, unsigned char *data) {
       changed_bit_array[byte_offset >> 3] |= 1 << (byte_offset & 0b111);
       changed_data[0] = data[i];
       dmx_rx[i] = data[i]; // Update rx buffer after we are done
-      for (unsigned int x = i+1; x < start_byte + 40; x++) {
+      unsigned char end_byte = min(start_byte + 40, dmx_data_length);
+      for (unsigned int x = i+1; x < end_byte; x++) {
         byte_offset++;
         if (data[x] != dmx_rx[x]) {
           changed_data[num_changed] = data[x];
